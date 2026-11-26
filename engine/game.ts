@@ -1,7 +1,12 @@
 import {
-  PREF_COUNT, PREF_NAMES, CAPITALS, POP, SPECIALS, PERSONALITIES,
-  COASTAL, NAVAL, LAND_PAIRS, SEA_PAIRS, REGIONS, REGION_NAMES, STARS, LON, LAT,
+  PREF_COUNT, PREF_NAMES, SPECIALS, PERSONALITIES,
+  NAVAL, REGIONS, REGION_NAMES, STARS,
 } from "./data";
+import {
+  REAL_TOWN_COUNT, REAL_NAMES, REAL_PREF, REAL_POP, REAL_LON, REAL_LAT,
+  REAL_TAX, REAL_GROWTH, REAL_ELDER, REAL_CAPITAL, REAL_PORT, REAL_SPECIAL,
+  REAL_LAND_EDGES, REAL_SEA_EDGES, REAL_PREF_POP,
+} from "./realdata";
 
 export class Town {
   id: i32 = 0;
@@ -9,6 +14,11 @@ export class Town {
   name: string = "";
   owner: i32 = 0;
   pop: f64 = 0;
+  lon: f64 = 0;
+  lat: f64 = 0;
+  tax: f64 = 0;
+  growth: f64 = 0;
+  elder: f64 = 0;
   troops: i32 = 0;
   morale: i32 = 60;
   castle: i32 = 0;
@@ -76,6 +86,9 @@ export class Game {
   lastOk: i32 = 1;
   lastMsg: string = "";
   towns: Town[] = [];
+  neighborStart: i32[] = [];
+  neighborTo: i32[] = [];
+  neighborKind: i32[] = [];
   factions: Faction[] = [];
   orders: Order[] = [];
   news: News[] = [];
@@ -86,6 +99,7 @@ export class Game {
   battleReport: string = "";
   orderSeq: i32 = 0;
   rank: i32[] = [];
+  brand: i32[] = [];
 }
 
 export let game: Game = new Game();
@@ -162,11 +176,6 @@ function idx(a: i32, b: i32): i32 {
   return a * (PREF_COUNT + 1) + b;
 }
 
-function coastal(p: i32): bool {
-  for (let i = 0; i < COASTAL.length; i++) if (COASTAL[i] == p) return true;
-  return false;
-}
-
 function naval(p: i32): bool {
   for (let i = 0; i < NAVAL.length; i++) if (NAVAL[i] == p) return true;
   return false;
@@ -202,26 +211,55 @@ function adjustRel(a: i32, b: i32, delta: i32): void {
   game.rel[idx(b, a)] = game.rel[k];
 }
 
-function isLandNeighbor(a: i32, b: i32): bool {
-  for (let i = 0; i < LAND_PAIRS.length; i += 2) {
-    if ((LAND_PAIRS[i] == a && LAND_PAIRS[i + 1] == b) || (LAND_PAIRS[i] == b && LAND_PAIRS[i + 1] == a)) return true;
+function buildNeighbors(): void {
+  let count = REAL_TOWN_COUNT;
+  game.neighborStart = new Array<i32>(count + 1);
+  let counts = new Array<i32>(count);
+  let i: i32;
+  for (i = 0; i < count; i++) counts[i] = 0;
+  for (i = 0; i < REAL_LAND_EDGES.length; i += 2) {
+    counts[REAL_LAND_EDGES[i]]++;
+    counts[REAL_LAND_EDGES[i + 1]]++;
   }
-  return false;
-}
-
-function isSeaNeighbor(a: i32, b: i32): bool {
-  for (let i = 0; i < SEA_PAIRS.length; i += 2) {
-    if ((SEA_PAIRS[i] == a && SEA_PAIRS[i + 1] == b) || (SEA_PAIRS[i] == b && SEA_PAIRS[i + 1] == a)) return true;
+  for (i = 0; i < REAL_SEA_EDGES.length; i += 2) {
+    counts[REAL_SEA_EDGES[i]]++;
+    counts[REAL_SEA_EDGES[i + 1]]++;
   }
-  return false;
+  game.neighborStart[0] = 0;
+  for (i = 0; i < count; i++) game.neighborStart[i + 1] = game.neighborStart[i] + counts[i];
+  let total = game.neighborStart[count];
+  game.neighborTo = new Array<i32>(total);
+  game.neighborKind = new Array<i32>(total);
+  let cursor = new Array<i32>(count);
+  for (i = 0; i < count; i++) cursor[i] = game.neighborStart[i];
+  for (i = 0; i < REAL_LAND_EDGES.length; i += 2) {
+    let a = REAL_LAND_EDGES[i];
+    let b = REAL_LAND_EDGES[i + 1];
+    let pa = cursor[a]++;
+    game.neighborTo[pa] = b;
+    game.neighborKind[pa] = 1;
+    let pb = cursor[b]++;
+    game.neighborTo[pb] = a;
+    game.neighborKind[pb] = 1;
+  }
+  for (i = 0; i < REAL_SEA_EDGES.length; i += 2) {
+    let a = REAL_SEA_EDGES[i];
+    let b = REAL_SEA_EDGES[i + 1];
+    if (REAL_PORT[a] == 0 || REAL_PORT[b] == 0) continue;
+    let pa = cursor[a]++;
+    game.neighborTo[pa] = b;
+    game.neighborKind[pa] = 2;
+    let pb = cursor[b]++;
+    game.neighborTo[pb] = a;
+    game.neighborKind[pb] = 2;
+  }
 }
 
 export function adjacent(from: i32, to: i32): i32 {
-  if (from == to) return 0;
-  let a = town(from).pref;
-  let b = town(to).pref;
-  if (isLandNeighbor(a, b)) return 1;
-  if (isSeaNeighbor(a, b) && town(from).port == 1 && town(to).port == 1) return 2;
+  if (from == to || from < 0 || to < 0 || from >= REAL_TOWN_COUNT || to >= REAL_TOWN_COUNT) return 0;
+  for (let k = game.neighborStart[from]; k < game.neighborStart[from + 1]; k++) {
+    if (game.neighborTo[k] == to) return game.neighborKind[k];
+  }
   return 0;
 }
 
@@ -241,6 +279,7 @@ function message(ok: bool, text: string): void {
 
 export function newGame(seed: i32, playerPref: i32, difficulty: i32, length: i32): void {
   game = new Game();
+  for (let i = 0; i < (PREF_COUNT + 1) * SPECIALS.length; i++) game.brand.push(0);
   game.seed = seed;
   game.rng = <u32>(seed * 2654435761 + 12345) | 1;
   game.player = clampI(playerPref, 1, PREF_COUNT);
@@ -260,61 +299,48 @@ export function newGame(seed: i32, playerPref: i32, difficulty: i32, length: i32
   }
 
   for (let p = 1; p <= PREF_COUNT; p++) {
-    let popTotal = POP[p - 1];
-    let count = clampI(<i32>Math.round(popTotal / 95.0) + 2, 4, 9);
-    let extras = CAPITALS[p - 1].split(",");
-    let weights: f64[] = [];
-    let totalWeight: f64 = 3.0;
-    weights.push(3.0);
-    for (let i = 1; i < count; i++) {
-      let w = 0.7 + rndF() * 1.1;
-      weights.push(w);
-      totalWeight += w;
-    }
-    let firstId = game.towns.length;
-    for (let i = 0; i < count; i++) {
-      let t = new Town();
-      t.id = game.towns.length;
-      t.pref = p;
-      let extra = CAPITALS[p - 1];
-      if (EXTRA_LIST[p - 1].length > 0) {
-        let list = EXTRA_LIST[p - 1].split(",");
-        if (i >= 1 && i - 1 < list.length) extra = list[i - 1];
-      }
-      t.name = i == 0 ? CAPITALS[p - 1] + (p == 13 ? "都" : "市") : extra;
-      t.owner = p;
-      t.initialOwner = p;
-      t.pop = popTotal * weights[i] / totalWeight;
-      t.troops = <i32>(t.pop * (80.0 + rndF() * 30.0));
-      t.morale = 62 + rndInt(12);
-      t.capitalTown = i == 0 ? 1 : 0;
-      t.castle = i == 0 ? 1 : 0;
-      t.commerce = i == 0 ? 2 : 0;
-      t.farm = i == 0 ? 1 : 0;
-      t.industry = i == 0 ? 1 : 0;
-      t.port = (coastal(p) && (i == 0 || i % 2 == 0)) ? 1 : 0;
-      t.specialty = (p * 3 + i * 7) % 13 < 6 ? (p + i * 2) % SPECIALS.length : -1;
-      game.towns.push(t);
-    }
     let f = faction(p);
     f.id = p;
     f.name = PREF_NAMES[p - 1];
-    f.capitalTown = firstId;
-    f.budget = 70.0 + popTotal * 0.12;
-    f.food = <i32>(popTotal * 1.4);
-    f.equip = <i32>(popTotal * 0.3);
+    f.capitalTown = REAL_CAPITAL[p - 1];
+    f.budget = 70.0 + REAL_PREF_POP[p - 1] * 0.12;
+    f.food = <i32>(REAL_PREF_POP[p - 1] * 1.4);
+    f.equip = <i32>(REAL_PREF_POP[p - 1] * 0.3);
     f.ships = naval(p) ? 3 : 0;
     f.morale = 60;
     f.moraleBase = 60;
     f.support = 62.0;
     f.personality = (p * 7 + <i32>(seed % 11)) % 5;
     f.alive = 1;
-    f.towns = count;
-    f.pop = popTotal;
     f.gained = 0;
-    extras = [];
   }
 
+  for (let i = 0; i < REAL_TOWN_COUNT; i++) {
+    let t = new Town();
+    t.id = i;
+    t.pref = REAL_PREF[i];
+    t.name = REAL_NAMES[i];
+    t.owner = t.pref;
+    t.initialOwner = t.pref;
+    t.pop = REAL_POP[i];
+    t.lon = REAL_LON[i];
+    t.lat = REAL_LAT[i];
+    t.tax = REAL_TAX[i];
+    t.growth = REAL_GROWTH[i];
+    t.elder = REAL_ELDER[i];
+    t.troops = <i32>(t.pop * (80.0 + rndF() * 30.0));
+    t.morale = 62 + rndInt(12);
+    t.capitalTown = i == REAL_CAPITAL[t.pref - 1] ? 1 : 0;
+    t.castle = t.capitalTown == 1 ? 2 : (t.pop > 80.0 ? 1 : 0);
+    t.commerce = clampI(<i32>(t.tax / 6000.0), 0, 4) + t.capitalTown;
+    t.farm = clampI(<i32>(t.elder / 30.0), 0, 2) + (REAL_SPECIAL[i] == 1 ? 1 : 0);
+    t.industry = clampI(<i32>(t.tax / 9000.0), 0, 4);
+    t.port = REAL_PORT[i];
+    t.specialty = REAL_SPECIAL[i];
+    game.towns.push(t);
+  }
+
+  buildNeighbors();
   recount();
   game.apMax = apFor(playerFaction());
   game.ap = game.apMax;
@@ -324,22 +350,8 @@ export function newGame(seed: i32, playerPref: i32, difficulty: i32, length: i32
   game.lastMsg = "都道府県を選んだ。月を進めて天下を目指そう。";
 }
 
-const EXTRA_LIST: string[] = [
-  "函館,旭川,釧路,帯広,小樽", "弘前,八戸,三沢,むつ", "花巻,一関,釜石,奥州", "石巻,塩釜,大崎,仙台南",
-  "能代,横手,大仙,由利本荘", "酒田,米沢,新庄,尾花沢", "いわき,郡山,会津若松,白河", "日立,土浦,古河,守谷",
-  "小山,栃木,足利,鹿沼", "高崎,桐生,伊勢崎,太田", "浦和,川口,越谷,所沢", "船橋,松戸,木更津,成田",
-  "八王子,練馬,世田谷,江戸川", "川崎,相模原,横須賀,鎌倉", "村上,長岡,三条,佐渡", "高岡,射水,砺波,氷見",
-  "七尾,加賀,小松,能登", "敦賀,若狭,越前,坂井", "富士吉田,都留,大月,甲斐", "松本,上田,飯田,諏訪",
-  "各務原,大垣,多治見,高山", "浜松,富士,掛川,伊東", "豊橋,岡崎,一宮,犬山", "四日市,鈴鹿,伊勢,松阪",
-  "彦根,近江八幡,草津,東近江", "宮津,福知山,舞鶴,宇治", "堺,吹田,豊中,池田", "姫路,尼崎,西宮,明石",
-  "橿原,生駒,天理,桜井", "田辺,新宮,橋本,紀の川", "米子,倉吉,境港,大山", "出雲,益田,浜田,大田",
-  "津山,倉敷,笠岡,岡山東", "福山,呉,尾道,三原", "下関,宇部,岩国,周南", "鳴門,池田,吉野川,小松島",
-  "丸亀,琴平,三豊,善通寺", "今治,宇和島,伊予,西条", "室戸,安芸,香美,南国", "北九州,久留米,太宰府,小倉",
-  "唐津,鳥栖,鹿島,武雄", "佐世保,諫早,島原,五島", "八代,天草,菊池,阿蘇", "別府,中津,佐伯,日田",
-  "都城,延岡,日南,小林", "鹿屋,奄美,串木野,出水", "名護,宜野湾,宮古島,石垣",
-];
-
 function recount(): void {
+  for (let i = 0; i < game.brand.length; i++) game.brand[i] = 0;
   for (let i = 1; i <= PREF_COUNT; i++) {
     let f = faction(i);
     f.towns = 0;
@@ -350,6 +362,9 @@ function recount(): void {
     let f = faction(t.owner);
     f.towns++;
     f.pop += t.pop;
+    if (t.specialty >= 0 && t.specialty < SPECIALS.length) {
+      game.brand[t.owner * SPECIALS.length + t.specialty]++;
+    }
   }
   for (let i = 1; i <= PREF_COUNT; i++) {
     let f = faction(i);
@@ -417,22 +432,21 @@ function ownedTowns(fid: i32): i32[] {
 }
 
 function brandLevel(fid: i32, sp: i32): i32 {
-  let n = 0;
-  for (let i = 0; i < game.towns.length; i++) {
-    let t = game.towns[i];
-    if (t.owner == fid && t.specialty == sp) n++;
-  }
-  return clampI(n / 3, 0, 3);
+  let k = fid * SPECIALS.length + sp;
+  if (k < 0 || k >= game.brand.length) return 0;
+  return clampI(game.brand[k] / 3, 0, 3);
 }
 
 function moraleFactor(m: i32): f64 {
   return 0.7 + <f64>m / 200.0;
 }
 
-function terrainPenalty(a: i32, b: i32, season: i32): f64 {
-  let diff = Math.abs(LAT[a - 1] - LAT[b - 1]) + Math.abs(LON[a - 1] - LON[b - 1]) * 0.6;
-  let penalty = clamp(diff * 0.035, 0.0, 0.35);
-  if (season == 3 && diff > 5.0) penalty += 0.08;
+function terrainPenalty(from: i32, to: i32, season: i32): f64 {
+  let a = town(from);
+  let b = town(to);
+  let diff = Math.abs(a.lat - b.lat) + Math.abs(a.lon - b.lon) * 0.6;
+  let penalty = clamp(diff * 0.05, 0.0, 0.3);
+  if (season == 3 && diff > 2.0) penalty += 0.08;
   return 1.0 - penalty;
 }
 
@@ -459,7 +473,7 @@ export function estimate(from: i32, to: i32, troops: i32): string {
   let need = <f64>sent / 400.0;
   let eratio = need <= 0 ? 1.0 : clamp(<f64>f.equip / need, 0.0, 1.0);
   let atk = <f64>sent * moraleFactor(f.morale) * (1.0 + <f64>brandLevel(f.id, 5) * 0.01)
-    * (f.momentum == 1 ? 1.1 : 1.0) * terrainPenalty(a.pref, b.pref, season())
+    * (f.momentum == 1 ? 1.1 : 1.0) * terrainPenalty(from, to, season())
     * (link == 2 ? 0.8 : 1.0) * (0.6 + 0.4 * eratio);
   let def = <f64>b.troops * (1.0 + <f64>b.castle * 0.25) * moraleFactor(b.morale)
     * (b.fortify > 0 ? 1.0 + <f64>b.fortify * 0.25 : 1.0)
@@ -720,7 +734,7 @@ function doAttack(from: i32, to: i32, troops: i32, f: Faction, fid: i32): bool {
   let ships = 0;
   if (link == 2) {
     ships = 1;
-    if (LAT[a.pref - 1] < 33.8 && (month() == 8 || month() == 9)) eta = 1;
+    if (a.lat < 33.8 && (month() == 8 || month() == 9)) eta = 1;
     if (season() == 3 && rndF() < 0.2) eta = 1;
     if (f.ships < ships) { message(false, "船が足りない。"); return false; }
     f.ships -= ships;
@@ -939,13 +953,12 @@ function supplyUpdate(): void {
     seen.push(f.capitalTown);
     while (queue.length > 0) {
       let cur = queue.shift();
-      for (let j = 0; j < game.towns.length; j++) {
-        let t = game.towns[j];
-        if (t.owner != fid || seen.indexOf(t.id) >= 0) continue;
-        if (adjacent(cur, t.id) > 0) {
-          seen.push(t.id);
-          queue.push(t.id);
-        }
+      for (let k = game.neighborStart[cur]; k < game.neighborStart[cur + 1]; k++) {
+        let next = game.neighborTo[k];
+        let t = game.towns[next];
+        if (t.owner != fid || seen.indexOf(next) >= 0) continue;
+        seen.push(next);
+        queue.push(next);
       }
     }
     for (let i = 0; i < game.towns.length; i++) {
@@ -972,9 +985,9 @@ function economyTurn(): void {
       equipGain += <f64>t.industry * 0.9;
       if (t.supplyCut == 1) {
         t.morale = clampI(t.morale - 2, 0, 100);
-        for (let j = 0; j < game.towns.length; j++) {
-          let e = game.towns[j];
-          if (e.owner != fid && adjacent(t.id, e.id) > 0 && rndF() < 0.03 && f.chaos == 0) {
+        for (let k = game.neighborStart[t.id]; k < game.neighborStart[t.id + 1]; k++) {
+          let e = game.towns[game.neighborTo[k]];
+          if (e.owner != fid && rndF() < 0.03 && f.chaos == 0) {
             e.owner = fid;
             e.troops += t.troops / 2;
             t.troops /= 2;
@@ -1083,9 +1096,10 @@ function cpuTurn(): void {
       if (game.difficulty == 2) threshold -= 0.06;
       let bestTarget = -1;
       let bestOdds = 0.0;
-      for (let j = 0; j < game.towns.length; j++) {
+      for (let k = game.neighborStart[t]; k < game.neighborStart[t + 1]; k++) {
+        let j = game.neighborTo[k];
         let b = game.towns[j];
-        if (b.owner == fid || adjacent(t, j) == 0) continue;
+        if (b.owner == fid || game.neighborKind[k] == 0) continue;
         if (hasTreaty(fid, b.owner, 1) || hasTreaty(fid, b.owner, 2)) continue;
         if (game.turn < 18 && b.owner == game.player) continue;
         let sent = <i32>(<f64>tw.troops * 0.75);
@@ -1150,7 +1164,7 @@ function doAttackCpu(fid: i32, from: i32, to: i32, sent: i32): bool {
   if (link == 2) {
     if (f.ships < 1) return false;
     f.ships--;
-    eta = (LAT[a.pref - 1] < 33.8 && (month() == 8 || month() == 9)) ? 1 : 0;
+    eta = (a.lat < 33.8 && (month() == 8 || month() == 9)) ? 1 : 0;
   }
   a.troops -= sent;
   queueOrder(fid, from, to, sent, eta, link == 2 ? 1 : 0);
@@ -1272,6 +1286,11 @@ export function snapshot(): string {
     o = field(o, "n", q(t.name), true);
     o = field(o, "o", t.owner.toString(), true);
     o = field(o, "pop", f1(t.pop), true);
+    o = field(o, "lon", f1(t.lon), true);
+    o = field(o, "lat", f1(t.lat), true);
+    o = field(o, "tax", f1(t.tax), true);
+    o = field(o, "growth", f1(t.growth), true);
+    o = field(o, "elder", f1(t.elder), true);
     o = field(o, "tr", t.troops.toString(), true);
     o = field(o, "mo", t.morale.toString(), true);
     o = field(o, "ca", t.castle.toString(), true);
@@ -1322,6 +1341,9 @@ export function snapshot(): string {
     o = field(o, "momentum", f.momentum.toString(), true);
     o = field(o, "chaos", f.chaos.toString(), true);
     o = field(o, "vassal", f.vassalOf.toString(), true);
+    o = field(o, "gained", f.gained.toString(), true);
+    o = field(o, "lost", f.lost.toString(), true);
+    o = field(o, "captured", f.captured.toString(), true);
     o += "}";
     fs.push(o);
   }

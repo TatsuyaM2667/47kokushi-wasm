@@ -4,6 +4,11 @@ export interface TownView {
   n: string;
   o: number;
   pop: number;
+  lon: number;
+  lat: number;
+  tax: number;
+  growth: number;
+  elder: number;
   tr: number;
   mo: number;
   ca: number;
@@ -41,6 +46,9 @@ export interface FactionView {
   momentum: number;
   chaos: number;
   vassal: number;
+  gained: number;
+  lost: number;
+  captured: number;
 }
 
 export interface NewsView {

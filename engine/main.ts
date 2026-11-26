@@ -21,3 +21,7 @@ export function odds(from: i32, to: i32, troops: i32): string {
   return estimate(from, to, troops);
 }
 
+export function adj(from: i32, to: i32): i32 {
+  return adjacent(from, to);
+}
+

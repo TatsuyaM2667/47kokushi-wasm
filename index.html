@@ -36,7 +36,7 @@
           <button class="primary" data-action="start">天下統一を始める</button>
           <button data-action="continue" id="continueBtn">つづきから</button>
         </div>
-        <p class="footnote">このゲームは『47国志』に着想を得た非公式の作品です。データは架空です。</p>
+        <p class="footnote">このゲームは『47国志』に着想を得た非公式の作品です。地図・人口は実データ（国土数値情報・国勢調査）を使用しています。</p>
       </div>
     </div>
 
@@ -51,9 +51,13 @@
         <section class="map-area">
           <div class="map-toolbar">
             <span id="mapTitle">全国</span>
-            <span class="map-hint">都道府県を押すと市町村を表示 / 町を押すと命令</span>
+            <span class="map-hint">市町村を押して命令 / 地理院タイル＋実行政界</span>
+            <span class="map-tools">
+              <button class="small" data-action="mapReset">全国表示</button>
+              <button class="small" data-action="mapFocus">本拠</button>
+            </span>
           </div>
-          <svg id="map" viewBox="0 0 1000 760" preserveAspectRatio="xMidYMid meet" role="img" aria-label="日本の地図"></svg>
+          <div id="map" role="application" aria-label="日本の市町村地図"></div>
           <div id="mapFooter" class="map-footer"></div>
         </section>
         <aside class="side right">

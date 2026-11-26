@@ -7,6 +7,7 @@ interface WasmExports extends WebAssembly.Exports {
   nextMonth(): number;
   state(): number;
   odds(from: number, to: number, troops: number): number;
+  adj(from: number, to: number): number;
 }
 
 const SAVE_KEY = "47kokushi-wasm-save-v1";
@@ -78,6 +79,10 @@ export class GameEngine {
       label: string;
       max: number;
     };
+  }
+
+  adjacent(from: number, to: number): number {
+    return this.exports.adj(from, to);
   }
 
   exportSave(): SaveData {

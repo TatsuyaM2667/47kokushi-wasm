@@ -1,8 +1,8 @@
 # 47国志 Wasm版
 
-『47国志』に着想を得た、ブラウザで遊べる都道府県統一シミュレーションです。simulation（地図・内政・合戦・CPU・外交・知事選）は **AssemblyScript → WebAssembly** で動き、画面は TypeScript + SVG で描いています。
+『47国志』に着想を得た、ブラウザで遊べる都道府県統一シミュレーションです。simulation（地図・内政・合戦・CPU・外交・知事選）は **AssemblyScript → WebAssembly** で動き、画面は TypeScript + Leaflet で描いています。
 
-> 非公式のファンメイド作品です。元ゲームのデータ・画像・コードは使っていません。地名と人口はおおよその架空データです。
+> 非公式のファンメイド作品です。元ゲームのデータ・画像・コードは使っていません。日本の行政界・人口は実データを使用しています。
 
 ## できること
 
@@ -13,6 +13,19 @@
 - 同盟・停戦・交易・贈り物、関係値と気質
 - 季節、兵糧、士気、勢い、補給線、知事選、順位
 - ローカル自動セーブ、JSONセーブの書き出し／読み込み
+- 戦果・参謀の進言・人材・名産の表示とカットイン演出
+
+## データ出典
+
+- 行政界：国土交通省 国土数値情報 行政区域データ（N03-21 2021、CC BY 4.0）。`smartnews-smri/japan-topography` の簡素化データをさらに mapshaper で圧縮しています。
+- 人口・市区町村分類：総務省 令和7年国勢調査を `machi-report.com` が整理したデータ（出典表示付き）。政令市の区は親市にまとめています。
+- 背景地図：国土地理院 地理院タイル（標準地図）。
+
+再生成する場合は Python と Node が必要です。
+
+```sh
+python3 scripts/generate-data.py
+```
 
 ## 開発
 
@@ -72,16 +85,21 @@ npx wrangler pages deploy dist
 
 ```text
 engine/
-  data.ts     都道府県・人口・座標・隣接関係などの定義
+  data.ts     都道府県・特産などの固定定義
+  realdata.ts scripts/generate-data.py が生成した1741町の実データ
   game.ts     ゲーム状態とシミュレーション本体（AssemblyScript）
   main.ts     JSから呼ぶWasmのエントリポイント
 src/
   engine.ts   Wasmローダーとセーブ／リプレイ
+  map.ts      Leaflet地図と実行政界の描画
   main.ts     UIと操作
   style.css
+scripts/
+  generate-data.py  実人口・行政界・隣接データの生成
 tests/
   engine.test.mjs   WasmエンジンのNodeテスト
-public/engine.wasm ビルド成果物
+public/engine.wasm  ビルド成果物
+public/data/municipalities.json  地図用GeoJSON
 ```
 
 JS から Wasm へは数値しか渡さず、Wasm から返る文字列（JSON）を JS で解析します。セーブは操作履歴を保存して同じseedで再生する方式なので、状態そのものは Wasm の外にありません。

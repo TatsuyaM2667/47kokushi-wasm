@@ -1,7 +1,8 @@
 import "./style.css";
 import { GameEngine } from "./engine";
-import type { Odds, Snapshot } from "./types";
-import { LAND_PAIRS, SEA_PAIRS, LON, LAT, PREF_NAMES, SPECIALS, STARS } from "../engine/data";
+import { JapanMap, colorOf } from "./map";
+import type { Odds, Snapshot, TownView } from "./types";
+import { PREF_NAMES, SPECIALS, STARS } from "../engine/data";
 
 const $ = <T extends Element = HTMLElement>(selector: string): T => {
   const found = document.querySelector<T>(selector);
@@ -19,13 +20,16 @@ const LENGTH_NAMES: Record<number, string> = { 1: "10年", 2: "20年", 3: "期�
 const PERSONALITY_NAMES = ["好戦的", "慎重", "商人気質", "義理堅い", "野心家"];
 const LEFT_TABS = [
   { id: "news", label: "報せ" },
+  { id: "report", label: "戦果" },
   { id: "rank", label: "順位" },
   { id: "diplo", label: "外交" },
+  { id: "talent", label: "人材" },
   { id: "brand", label: "名産" },
   { id: "menu", label: "メニュー" },
 ];
 
 let engine: GameEngine;
+let japanMap: JapanMap;
 let snap: Snapshot;
 let selectedPref = 13;
 let selectedTown = 0;
@@ -35,31 +39,10 @@ let leftTab = "news";
 let attackFrom = -1;
 let attackTroops = 0;
 let lastResult = 0;
+let townsByPref = new Map<number, TownView[]>();
 
-function colorOf(id: number): string {
-  const hue = (id * 137 + 18) % 360;
-  const saturation = 38 + (id % 4) * 7;
-  const lightness = 35 + (id % 5) * 5;
-  return `hsl(${hue} ${saturation}% ${lightness}%)`;
-}
-
-function project(pref: number): { x: number; y: number } {
-  const x = 40 + ((LON[pref - 1] - 126.3) / 18.3) * 920;
-  const y = 30 + ((44.4 - LAT[pref - 1]) / 18.8) * 690;
-  return { x, y };
-}
-
-function hexPoints(x: number, y: number, r: number): string {
-  const points: string[] = [];
-  for (let i = 0; i < 6; i++) {
-    const angle = (Math.PI / 3) * i - Math.PI / 2;
-    points.push(`${(x + Math.cos(angle) * r).toFixed(1)},${(y + Math.sin(angle) * r).toFixed(1)}`);
-  }
-  return points.join(" ");
-}
-
-function townById(id: number) {
-  return snap.towns.find((t) => t.id === id);
+function townById(id: number): TownView | undefined {
+  return snap.towns[id];
 }
 
 function factionById(id: number) {
@@ -89,6 +72,10 @@ function treatyNames(a: number, b: number): string {
   return labels.join("・") || "なし";
 }
 
+function adjacentTown(a: TownView, b: TownView): boolean {
+  return engine.adjacent(a.id, b.id) > 0;
+}
+
 function renderStartOptions(): void {
   const grid = $("#prefGrid");
   grid.innerHTML = PREF_NAMES.map((name, i) => {
@@ -107,8 +94,7 @@ function renderStartOptions(): void {
     `<button class="${value === selectedDifficulty ? "selected" : ""}" data-action="selectDifficulty" data-value="${value}">${DIFFICULTY_NAMES[value]}</button>`
   ).join("");
 
-  const saved = engine.hasSave();
-  $("#continueBtn").toggleAttribute("disabled", !saved);
+  $("#continueBtn").toggleAttribute("disabled", !engine.hasSave());
 }
 
 function renderHud(): void {
@@ -118,7 +104,7 @@ function renderHud(): void {
     `<div class="stat ${cls}">${label}<b>${value}</b></div>`;
 
   $("#hud").innerHTML = `
-    <div class="hud-title">47国志<small>${DIFFICULTY_NAMES[snap.difficulty]}・${LENGTH_NAMES[snap.length]}</small></div>
+    <div class="hud-title">47国志<small>実データ版・${DIFFICULTY_NAMES[snap.difficulty]}・${LENGTH_NAMES[snap.length]}</small></div>
     ${stat("年月", `${snap.year}/${String(snap.month).padStart(2, "0")}`)}
     ${stat("予算", NUM(self.budget))}
     ${stat("兵糧", NUM(self.food), self.food < 200 ? "warn" : "")}
@@ -127,12 +113,11 @@ function renderHud(): void {
     ${stat("士気", String(self.morale))}
     ${stat("支持", `${Math.round(self.support)}%`, supportWarn ? "warn" : "good")}
     ${stat("行動力", `${snap.ap}/${snap.apMax}`)}
+    ${stat("町", `${self.towns}/${snap.towns.length}`)}
     ${stat("順位", `${snap.rank}/47`)}
     ${stat("勢い", self.momentum ? "乗る" : "—", self.momentum ? "good" : "")}
     <div class="hud-spacer"></div>
-    <div class="hud-actions">
-      <button data-action="leftTab" data-tab="menu" class="small">メニュー</button>
-    </div>`;
+    <div class="hud-actions"><button data-action="leftTab" data-tab="menu" class="small">メニュー</button></div>`;
 
   const latest = snap.news[0];
   $("#ticker").innerHTML = `<span class="ticker-label">速報</span>
@@ -145,75 +130,48 @@ function renderHud(): void {
 }
 
 function renderMap(): void {
-  const parts: string[] = [];
-  const townsByPref = new Map<number, typeof snap.towns>();
-  for (const t of snap.towns) {
-    const list = townsByPref.get(t.p) ?? [];
-    list.push(t);
-    townsByPref.set(t.p, list);
-  }
-
-  for (let i = 0; i < LAND_PAIRS.length; i += 2) {
-    const a = project(LAND_PAIRS[i]);
-    const b = project(LAND_PAIRS[i + 1]);
-    parts.push(`<line class="land-edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />`);
-  }
-  for (let i = 0; i < SEA_PAIRS.length; i += 2) {
-    const a = project(SEA_PAIRS[i]);
-    const b = project(SEA_PAIRS[i + 1]);
-    parts.push(`<line class="sea-edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />`);
-  }
-
-  for (let p = 1; p <= 47; p++) {
-    const { x, y } = project(p);
-    const owner = snap.prefs[p - 1].owner;
-    const selected = p === selectedPref;
-    parts.push(`<polygon class="pref-shape${selected ? " selected" : ""}" points="${hexPoints(x, y, 24)}"
-      fill="${colorOf(owner)}" data-action="pref" data-pref="${p}" />`);
-    parts.push(`<text class="pref-label" x="${x}" y="${y - 29}">${html(PREF_NAMES[p - 1])}</text>`);
-    const towns = townsByPref.get(p) ?? [];
-    towns.forEach((t, idx) => {
-      const angle = (Math.PI * 2 * idx) / Math.max(towns.length, 1) - Math.PI / 2;
-      const radius = idx === 0 ? 0 : towns.length > 6 ? 14 : 12;
-      const tx = x + Math.cos(angle) * radius;
-      const ty = y + Math.sin(angle) * radius;
-      const march = snap.orders.some((o) => o.to === t.id || o.from === t.id);
-      const cls = `town-dot${t.id === selectedTown ? " selected" : ""}${march ? " marching" : ""}`;
-      const stroke = t.o === snap.player ? "#e9c35f" : "rgba(255,255,255,0.75)";
-      parts.push(`<circle class="${cls}" cx="${tx}" cy="${ty}" r="${idx === 0 ? 5 : 3.6}"
-        fill="${colorOf(t.o)}" stroke="${stroke}" data-action="town" data-town="${t.id}" data-pref="${p}" />`);
-    });
-  }
-
-  for (const order of snap.orders) {
-    const from = townById(order.from);
-    const to = townById(order.to);
-    if (!from || !to) continue;
-    const a = project(from.p);
-    const b = project(to.p);
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2 - 42;
-    parts.push(`<path class="order-line" d="M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}" />`);
-    parts.push(`<text class="order-label" x="${mx}" y="${my - 3}" text-anchor="middle">${NUM(order.troops)}</text>`);
-  }
-
-  $("#map").innerHTML = parts.join("");
-  $("#mapTitle").textContent = `${PREF_NAMES[selectedPref - 1]}県`;
+  japanMap.update(snap, selectedTown);
   const selected = townById(selectedTown);
+  $("#mapTitle").textContent = selected
+    ? `${PREF_NAMES[selected.p - 1]}／${selected.n}`
+    : `${PREF_NAMES[selectedPref - 1]}県`;
   $("#mapFooter").textContent = selected
-    ? `選択中：${selected.n}（${PREF_NAMES[selected.p - 1]}）`
-    : "都道府県を押して町を選ぶ";
+    ? `選択中：${selected.n}（人口 ${selected.pop.toFixed(1)}万人／${NUM(selected.tr)}兵）`
+    : "市町村を押して命令を選ぶ";
+}
+
+function advice(): string {
+  const self = snap.self;
+  const tips: string[] = [];
+  if (self.food < 300) tips.push("兵糧が少ない。十月の収穫まで「祭り」と「開墾」でしのぐ。");
+  if (self.budget < 60) tips.push("財源が苦しい。商業都市を priority に内政を回す。");
+  if (self.support < 55) tips.push("支持が低下している。祭りと勝戦で民心を戻す。");
+  if (snap.orders.length > 0) tips.push(`出陣中 ${snap.orders.length} 件。補給線が切れていないか確認する。`);
+  if (tips.length === 0) tips.push("領内は安定している。隣接する弱い町から逐步で広げる好機。");
+  return `<div class="panel-section"><h3>参謀の進言</h3><ul class="advice-list">${tips
+    .map((tip) => `<li>${html(tip)}</li>`).join("")}</ul></div>`;
 }
 
 function renderNewsPanel(): string {
-  const items = snap.news.slice(0, 18).map((n) =>
+  const items = snap.news.slice(0, 20).map((n) =>
     `<li class="k${n.kind}"><em>${dateOf(n.turn)}</em>${html(n.text)}</li>`
   ).join("");
-  return `<div class="panel-section"><h3>報せ</h3><ul class="news-list">${items || "<li>まだ報せはない。</li>"}</ul></div>`;
+  return `${advice()}<div class="panel-section"><h3>報せ</h3><ul class="news-list">${items || "<li>まだ報せはない。</li>"}</ul></div>`;
+}
+
+function renderReportPanel(): string {
+  const rows = snap.factions.filter((f) => f.alive || f.towns > 0).map((f) =>
+    `<tr class="${f.id === snap.player ? "mine" : ""}"><td>${html(f.name)}</td>
+      <td class="num">+${f.gained}</td><td class="num">-${f.lost}</td><td class="num">${f.captured}</td></tr>`
+  ).join("");
+  return `<div class="panel-section"><h3>今月の戦果</h3>
+    <p>${snap.report ? html(snap.report) : "大きな合戦はなかった。"}</p></div>
+    <div class="panel-section"><h3>天下の戦果</h3>
+    <table class="table"><thead><tr><th>勢力</th><th>得</th><th>失</th><th>攻略</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderRankPanel(): string {
-  const rows = snap.rankIds.slice(0, 16).map((id, i) => {
+  const rows = snap.rankIds.slice(0, 20).map((id, i) => {
     const f = factionById(id);
     return `<tr class="${id === snap.player ? "mine" : ""}"><td>${i + 1}</td><td>${html(f.name)}</td>
       <td class="num">${f.towns}</td><td class="num">${NUM(f.troops)}</td></tr>`;
@@ -233,24 +191,20 @@ function renderDiplomacyPanel(): string {
       <button class="small" data-action="proposal" data-index="${i}" data-accept="0">断る</button></div></div>`;
   }).join("");
 
+  const own = snap.towns.filter((t) => t.o === snap.player);
   const seen = new Set<number>();
   const rows: string[] = [];
-  for (const t of snap.towns) {
-    if (t.o === snap.player || seen.has(t.o)) continue;
-    let adjacent = false;
-    for (const own of snap.towns) {
-      if (own.o !== snap.player) continue;
-      if (adjacentTown(own, t)) adjacent = true;
-    }
-    if (!adjacent) continue;
-    seen.add(t.o);
-    const f = factionById(t.o);
-    const rel = relationAt(snap.player, t.o);
+  for (const target of snap.towns) {
+    if (target.o === snap.player || seen.has(target.o)) continue;
+    if (!own.some((t) => adjacentTown(t, target))) continue;
+    seen.add(target.o);
+    const f = factionById(target.o);
+    const rel = relationAt(snap.player, target.o);
     rows.push(`<tr><td>${html(f.name)}</td><td>${PERSONALITY_NAMES[f.personality]}</td><td class="num">${rel > 0 ? "+" : ""}${rel}</td>
-      <td>${treatyNames(snap.player, t.o)}</td>
-      <td><button class="small" data-action="diplo" data-target="${t.o}" data-type="0">同盟</button>
-      <button class="small" data-action="diplo" data-target="${t.o}" data-type="1">停戦</button>
-      <button class="small" data-action="diplo" data-target="${t.o}" data-type="2">交易</button></td></tr>`);
+      <td>${treatyNames(snap.player, target.o)}</td>
+      <td><button class="small" data-action="diplo" data-target="${target.o}" data-type="0">同盟</button>
+      <button class="small" data-action="diplo" data-target="${target.o}" data-type="1">停戦</button>
+      <button class="small" data-action="diplo" data-target="${target.o}" data-type="2">交易</button></td></tr>`);
   }
 
   return `${proposals}<div class="panel-section"><h3>外交（行動力1）</h3>
@@ -259,6 +213,20 @@ function renderDiplomacyPanel(): string {
     <p class="hint">同盟20・停戦10・交易0・贈り物30。断られても行動力は戻らない。</p>
     <div class="row"><span class="grow">贈り物を送る相手は下の隣接勢力から選ぶ。</span><button class="small" data-action="giftToMenu">贈り物 (30)</button></div>
     </div>`;
+}
+
+function renderTalentPanel(): string {
+  const own = snap.towns.filter((t) => t.o === snap.player);
+  const leaders = [...own].sort((a, b) => (b.pop * (1 + b.co * 0.1)) - (a.pop * (1 + a.co * 0.1))).slice(0, 10);
+  const scouts = [...own].sort((a, b) => b.growth - a.growth).slice(0, 6);
+  const leaderRows = leaders.map((t, i) => `<tr class="${t.id === selectedTown ? "mine" : ""}"><td>${i + 1}</td>
+    <td><button class="link-button" data-action="town" data-town="${t.id}" data-pref="${t.p}">${html(t.n)}</button></td>
+    <td class="num">${t.pop.toFixed(1)}</td><td>${SPECIALS[t.sp] ?? "—"}</td></tr>`).join("");
+  const scoutRows = scouts.map((t) => `<li>${html(t.n)}（人口増 ${t.growth > 0 ? "+" : ""}${t.growth}%）</li>`).join("");
+  return `<div class="panel-section"><h3>人材（有力都市）</h3>
+    <table class="table"><thead><tr><th>#</th><th>町</th><th>万人</th><th>名産</th></tr></thead><tbody>${leaderRows}</tbody></table></div>
+    <div class="panel-section"><h3>伸展する町</h3><ul class="news-list">${scoutRows}</ul>
+    <p class="hint">人材は都市の人口・商業・伸びから判断する。登用は内政の効果を高める。</p></div>`;
 }
 
 function renderBrandPanel(): string {
@@ -284,7 +252,11 @@ function renderMenuPanel(): string {
     <div class="panel-section"><h3>遊び方（概要）</h3>
       <p>毎月、行動力を使って内政・徴兵・出陣・外交を行う。月を進めると合戦と収入が解決し、CPU勢力も動く。</p>
       <p>4年ごとの知事選で支持が50%を切ると落選。全ての町を取れば天下統一。10年／20年では期限の順位も評価される。</p>
-      <p class="hint">パラメータと合戦判定はすべて WebAssembly（AssemblyScript）で計算しています。</p>
+      <p class="hint">地図は国土数値情報の行政界と国土地理院タイル、人口は国勢調査に基づく実データ。計算はすべて WebAssembly で行う。</p>
+    </div>
+    <div class="panel-section"><h3>データ出典</h3>
+      <p class="hint">行政界：国土交通省 国土数値情報 N03（CC BY 4.0）／人口：総務省 令和7年国勢調査を街の通信簿が整理したデータ／背景：国土地理院 地理院タイル</p>
+      <div class="swatches">${Array.from({ length: 12 }, (_, i) => `<span class="swatch" style="background:${colorOf(i + 1)}"></span>`).join("")}</div>
     </div>`;
 }
 
@@ -294,8 +266,10 @@ function renderLeft(): void {
   ).join("");
   const renderers: Record<string, () => string> = {
     news: renderNewsPanel,
+    report: renderReportPanel,
     rank: renderRankPanel,
     diplo: renderDiplomacyPanel,
+    talent: renderTalentPanel,
     brand: renderBrandPanel,
     menu: renderMenuPanel,
   };
@@ -320,18 +294,7 @@ function prepareAttack(): void {
     attackFrom = candidates[0]?.id ?? -1;
   }
   const from = townById(attackFrom);
-  attackTroops = from ? Math.max(500, Math.floor(from.tr * 0.75 / 100) * 100) : 0;
-}
-
-function isPair(pairs: number[], a: number, b: number): boolean {
-  return pairs.some((v, i) => i % 2 === 0 &&
-    ((v === a && pairs[i + 1] === b) || (v === b && pairs[i + 1] === a)));
-}
-
-function adjacentTown(a: { p: number; po: number }, b: { p: number; po: number }): boolean {
-  if (a.p === b.p) return true;
-  if (isPair(LAND_PAIRS, a.p, b.p)) return true;
-  return isPair(SEA_PAIRS, a.p, b.p) && a.po === 1 && b.po === 1;
+  attackTroops = from ? Math.max(100, Math.floor(from.tr * 0.75 / 100) * 100) : 0;
 }
 
 function renderEstimate(): string {
@@ -348,7 +311,7 @@ function renderEstimate(): string {
 function renderRight(): void {
   const t = townById(selectedTown);
   if (!t) {
-    $("#rightPanel").innerHTML = "<p>地図の都道府県、または町を押して命令を選ぶ。</p>";
+    $("#rightPanel").innerHTML = "<p>地図の市町村、または左の列表から町を選んで命令を選ぶ。</p>";
     return;
   }
   const pref = PREF_NAMES[t.p - 1];
@@ -360,6 +323,7 @@ function renderRight(): void {
   if (t.fo) flags.push(`<span class="badge">陣 ×${t.fo}</span>`);
   if (t.sc) flags.push(`<span class="badge red">補給線なし</span>`);
   if (t.sp >= 0) flags.push(`<span class="badge">${html(SPECIALS[t.sp])}</span>`);
+  if (t.growth > 20) flags.push(`<span class="badge">人口増 ${t.growth}%</span>`);
 
   let commands = "";
   if (own) {
@@ -393,11 +357,12 @@ function renderRight(): void {
         <div class="row" style="margin-top:8px"><button class="primary grow" data-action="attack">出陣する</button>
         <button data-action="scout" data-target="${t.o}">物見</button></div>
       ` : "<p>この町へ出陣できる自領の町がない。</p>"}
-      <p class="hint">総攻めは「報せ」以外のタブからは実行できません。メニューの戦果で確認。</p>
+      <p class="hint">総攻めは「報せ」以外のタブからは実行できません。戦果タブで確認。</p>
     </div>`;
   }
 
-  const townList = (townsByPref.get(t.p) ?? []).map((item) =>
+  const list = townsByPref.get(t.p) ?? [];
+  const townList = list.slice(0, 80).map((item) =>
     `<button class="${item.id === selectedTown ? "selected" : ""}" data-action="town" data-town="${item.id}" data-pref="${t.p}">
       <span>${html(item.n)}</span><span>${PREF_NAMES[item.o - 1]} ${NUM(item.tr)}</span>
     </button>`
@@ -413,13 +378,13 @@ function renderRight(): void {
         <span>兵</span><b>${NUM(t.tr)}</b>
         <span>民心 / 士気</span><b>${t.mo}</b>
         <span>城 / 商業 / 農 / 工</span><b>${t.ca} / ${t.co} / ${t.fa} / ${t.in}</b>
+        <span>税 / 伸び</span><b>${NUM(t.tax)} / ${t.growth}%</b>
       </div>
     </div>
     ${commands}
-    <div class="panel-section"><h3>${html(pref)}の市町村</h3><div class="town-list">${townList}</div></div>`;
+    <div class="panel-section"><h3>${html(pref)}の市町村（${list.length}）</h3><div class="town-list">${townList}</div>
+      ${list.length > 80 ? `<p class="hint">上位80町を表示。地図を拡大して残りを選ぶ。</p>` : ""}</div>`;
 }
-
-let townsByPref = new Map<number, Snapshot["towns"]>();
 
 function renderAll(): void {
   townsByPref = new Map();
@@ -461,17 +426,19 @@ function showResult(): void {
     3: `${snap.rank}位で年代を終えた。増やした町の数が評価される。`,
   };
   showModal(titles[snap.result], `<p>${bodies[snap.result]}</p><p class="hint">${html(snap.msg)}</p>
-    <button data-action="restart" class="primary">はじめから遊ぶ</button>`);
+    <button data-action="restart" class="primary">はじめから遊ぶ</button>`, true);
 }
 
-function showModal(title: string, body: string): void {
+function showModal(title: string, body: string, cutin = false): void {
   $("#modalTitle").textContent = title;
   $("#modalBody").innerHTML = body;
+  $("#modal").classList.toggle("cutin", cutin);
   $("#modal").classList.remove("hidden");
 }
 
 function hideModal(): void {
   $("#modal").classList.add("hidden");
+  $("#modal").classList.remove("cutin");
 }
 
 function startGame(seed: number, pref: number, difficulty: number, length: number): void {
@@ -479,6 +446,10 @@ function startGame(seed: number, pref: number, difficulty: number, length: numbe
   selectedPref = pref;
   selectedTown = snap.prefs[pref - 1].cap;
   lastResult = 0;
+  japanMap.resize();
+  japanMap.resetView();
+  japanMap.focusTown(selectedTown);
+  japanMap.invalidate();
   renderAll();
 }
 
@@ -522,30 +493,47 @@ function handleAction(action: string, el: Element): void {
       apply(engine.replay(saved));
       selectedPref = snap.player;
       selectedTown = snap.prefs[snap.player - 1].cap;
+      japanMap.resize();
+      japanMap.resetView();
+      japanMap.focusTown(selectedTown);
+      japanMap.invalidate();
       renderAll();
       break;
     }
     case "pref":
       selectedPref = attr("data-pref");
       selectedTown = snap.prefs[selectedPref - 1].cap;
+      japanMap.focusPref(selectedPref);
       renderAll();
       break;
     case "town":
       selectedTown = attr("data-town");
       selectedPref = attr("data-pref");
+      japanMap.focusTown(selectedTown);
       renderAll();
+      break;
+    case "mapReset":
+      japanMap.resetView();
+      break;
+    case "mapFocus":
+      japanMap.focusTown(selectedTown);
       break;
     case "leftTab":
       leftTab = el.getAttribute("data-tab") ?? "news";
       renderLeft();
       break;
-    case "next":
+    case "next": {
+      const previousTowns = snap.self.towns;
       apply(engine.nextMonth());
+      const gained = snap.self.towns - previousTowns;
       if (snap.report && snap.result === 0) {
-        showModal(`${snap.year}年${snap.month}月の戦果`, `<p>${html(snap.report)}</p>
-          <p class="hint">${html(snap.news.slice(0, 4).map((n) => n.text).join("／"))}</p>`);
+        const cutin = gained > 0 || /落とし|制圧|天下/.test(snap.report);
+        showModal(`${snap.year}年${snap.month}月の戦果${gained > 0 ? ` ＋${gained}町` : ""}`,
+          `<p class="cutin-line">${html(snap.report)}</p>
+           <p class="hint">${html(snap.news.slice(0, 4).map((n) => n.text).join("／"))}</p>`, cutin);
       }
       break;
+    }
     case "cmd":
       apply(engine.cmd(attr("data-kind"), attr("data-a"), attr("data-b"), 0));
       break;
@@ -611,9 +599,21 @@ function handleAction(action: string, el: Element): void {
 }
 
 async function main(): Promise<void> {
+  japanMap = new JapanMap("map", {
+    onTown: (id) => {
+      selectedTown = id;
+      const town = snap?.towns[id];
+      if (town) selectedPref = town.p;
+    },
+    onPref: (pref) => {
+      selectedPref = pref;
+    },
+  });
   engine = await GameEngine.create();
+  await japanMap.load();
   snap = engine.boot(1, 13, 1, 1);
   selectedTown = snap.prefs[12].cap;
+  selectedPref = 13;
   renderStartOptions();
   $("#loading").classList.add("hidden");
   $("#start").classList.remove("hidden");
@@ -631,6 +631,16 @@ document.addEventListener("input", (event) => {
     attackTroops = Number(target.value);
     const label = $("#troopsValue");
     if (label) label.textContent = NUM(attackTroops);
+    const box = $("#estimateBox");
+    if (box) box.innerHTML = renderEstimate();
+  }
+  if (target.id === "fromTown") {
+    attackFrom = Number(target.value);
+    const from = townById(attackFrom);
+    attackTroops = from ? Math.max(100, Math.floor(from.tr * 0.75 / 100) * 100) : 0;
+    const range = $<HTMLInputElement>("#troopsRange");
+    range.max = String(Math.max(100, from?.tr ?? 100));
+    range.value = String(Math.min(attackTroops, Number(range.max)));
     const box = $("#estimateBox");
     if (box) box.innerHTML = renderEstimate();
   }

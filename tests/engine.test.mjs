@@ -23,7 +23,7 @@ test("新規ゲームが47県・市町村・初期値を返す", async () => {
   const s = call("boot", 42, 31, 1, 1);
   assert.equal(s.prefs.length, 47);
   assert.equal(s.factions.length, 47);
-  assert.ok(s.towns.length > 150);
+  assert.ok(s.towns.length > 1500);
   assert.equal(s.player, 31);
   assert.equal(s.year, 2027);
   assert.equal(s.month, 4);
@@ -47,7 +47,8 @@ test("出陣の見込みとコマンドが動作する", async () => {
   const { call, decode, ex } = await createEngine();
   const s = call("boot", 11, 33, 1, 1);
   const own = s.towns.find((t) => t.o === 33 && t.tr > 3000);
-  const enemy = s.towns.find((t) => t.o === 34);
+  const enemy = s.towns.find((t) => t.o !== 33 && ex.adj(own.id, t.id) > 0);
+  assert.ok(enemy, "隣接する敵町が見つからない");
   const estimate = JSON.parse(decode(ex.odds(own.id, enemy.id, Math.floor(own.tr * 0.6))));
   assert.equal(estimate.ok, 1);
   assert.ok(Number(estimate.odds) > 0 && Number(estimate.odds) <= 100);
