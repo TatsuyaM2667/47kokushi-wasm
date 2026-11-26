@@ -3,4 +3,5 @@ dist/
 public/engine.wasm
 *.wasm.map
 *.log
+__pycache__/
 .DS_Store

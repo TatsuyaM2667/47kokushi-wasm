@@ -1,6 +1,8 @@
 import "./style.css";
 import { GameEngine } from "./engine";
 import { JapanMap, colorOf } from "./map";
+import type { TileMode } from "./map";
+import { Units3D } from "./units3d";
 import type { Odds, Snapshot, TownView } from "./types";
 import { PREF_NAMES, SPECIALS, STARS } from "../engine/data";
 
@@ -30,6 +32,7 @@ const LEFT_TABS = [
 
 let engine: GameEngine;
 let japanMap: JapanMap;
+let units3d: Units3D;
 let snap: Snapshot;
 let selectedPref = 13;
 let selectedTown = 0;
@@ -131,6 +134,7 @@ function renderHud(): void {
 
 function renderMap(): void {
   japanMap.update(snap, selectedTown);
+  units3d.update(snap, selectedTown);
   const selected = townById(selectedTown);
   $("#mapTitle").textContent = selected
     ? `${PREF_NAMES[selected.p - 1]}／${selected.n}`
@@ -447,6 +451,7 @@ function startGame(seed: number, pref: number, difficulty: number, length: numbe
   selectedTown = snap.prefs[pref - 1].cap;
   lastResult = 0;
   japanMap.resize();
+  units3d.resize();
   japanMap.resetView();
   japanMap.focusTown(selectedTown);
   japanMap.invalidate();
@@ -494,6 +499,7 @@ function handleAction(action: string, el: Element): void {
       selectedPref = snap.player;
       selectedTown = snap.prefs[snap.player - 1].cap;
       japanMap.resize();
+      units3d.resize();
       japanMap.resetView();
       japanMap.focusTown(selectedTown);
       japanMap.invalidate();
@@ -518,6 +524,21 @@ function handleAction(action: string, el: Element): void {
     case "mapFocus":
       japanMap.focusTown(selectedTown);
       break;
+    case "tile": {
+      const mode = el.getAttribute("data-mode") as TileMode;
+      japanMap.setTileMode(mode);
+      document.querySelectorAll("[data-action='tile']").forEach((button) =>
+        button.classList.toggle("selected", button.getAttribute("data-mode") === mode)
+      );
+      break;
+    }
+    case "units3d": {
+      const button = el as HTMLElement;
+      const next = !button.classList.contains("selected");
+      button.classList.toggle("selected", next);
+      units3d.setVisible(next);
+      break;
+    }
     case "leftTab":
       leftTab = el.getAttribute("data-tab") ?? "news";
       renderLeft();
@@ -609,6 +630,7 @@ async function main(): Promise<void> {
       selectedPref = pref;
     },
   });
+  units3d = new Units3D(japanMap.getMap(), $("#map"));
   engine = await GameEngine.create();
   await japanMap.load();
   snap = engine.boot(1, 13, 1, 1);

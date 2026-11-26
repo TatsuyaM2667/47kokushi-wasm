@@ -3,10 +3,20 @@ import "leaflet/dist/leaflet.css";
 import type { Snapshot } from "./types";
 import { PREF_NAMES } from "../engine/data";
 
+export type TileMode = "std" | "terrain" | "photo";
+
+const TILE_URLS: Record<TileMode, string> = {
+  std: "https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png",
+  terrain: "https://cyberjapandata.gsi.go.jp/xyz/relief/{z}/{x}/{y}.png",
+  photo: "https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg",
+};
+
 export function colorOf(id: number): string {
-  const hue = (id * 137 + 18) % 360;
-  const saturation = 38 + (id % 4) * 7;
-  const lightness = 35 + (id % 5) * 5;
+  if (id <= 0) return "#3b4140";
+  if (id === 1) return "#3f7fd0";
+  const hue = Math.round((id * 137.508 + 24) % 360);
+  const saturation = 54 + (id % 3) * 8;
+  const lightness = 38 + (id % 4) * 5;
   return `hsl(${hue} ${saturation}% ${lightness}%)`;
 }
 
@@ -28,11 +38,12 @@ function styleOf(feature: TownFeature, snap: Snapshot | null, selectedTown: numb
   const selected = id === selectedTown;
   const marching = snap?.orders.some((order) => order.from === id || order.to === id) ?? false;
   return {
-    color: selected ? "#ffd35c" : marching ? "#f0a45a" : "rgba(38, 44, 39, 0.75)",
-    weight: selected ? 3 : marching ? 2 : 0.7,
-    opacity: 0.95,
+    color: selected ? "#ffd35c" : marching ? "#f4ad55" : "#080a09",
+    weight: selected ? 3.6 : marching ? 2.6 : 1.5,
+    opacity: 0.98,
     fillColor: colorOf(owner),
-    fillOpacity: selected ? 0.86 : 0.62,
+    fillOpacity: selected ? 0.9 : 0.78,
+    lineJoin: "round",
   };
 }
 
@@ -41,6 +52,8 @@ export class JapanMap {
   private readonly callbacks: MapCallbacks;
   private readonly orderLayer: L.LayerGroup;
   private readonly layers: L.Path[] = [];
+  private tileLayer: L.TileLayer;
+  private tileMode: TileMode = "std";
   private bounds: L.LatLngBounds | null = null;
   private snap: Snapshot | null = null;
   private selectedTown = -1;
@@ -57,12 +70,28 @@ export class JapanMap {
       worldCopyJump: false,
     });
     this.map.setView([36.2, 138.2], 5);
-    L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png", {
+    this.tileLayer = this.makeTileLayer(this.tileMode).addTo(this.map);
+    this.orderLayer = L.layerGroup().addTo(this.map);
+  }
+
+  private makeTileLayer(mode: TileMode): L.TileLayer {
+    return L.tileLayer(TILE_URLS[mode], {
       attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>',
       maxZoom: 13,
       crossOrigin: true,
-    }).addTo(this.map);
-    this.orderLayer = L.layerGroup().addTo(this.map);
+    });
+  }
+
+  getMap(): L.Map {
+    return this.map;
+  }
+
+  setTileMode(mode: TileMode): void {
+    if (mode === this.tileMode) return;
+    this.map.removeLayer(this.tileLayer);
+    this.tileMode = mode;
+    this.tileLayer = this.makeTileLayer(mode).addTo(this.map);
+    this.tileLayer.bringToBack();
   }
 
   async load(): Promise<void> {
@@ -85,7 +114,7 @@ export class JapanMap {
           this.callbacks.onPref(townFeature.properties.pref);
         });
         path.on("mouseover", () => {
-          if (id !== this.selectedTown) (path as L.Path).setStyle({ weight: 1.8, fillOpacity: 0.76 });
+          if (id !== this.selectedTown) (path as L.Path).setStyle({ weight: 2.4, fillOpacity: 0.88 });
         });
         path.on("mouseout", () => {
           if (id !== this.selectedTown && this.snap) {
@@ -121,10 +150,12 @@ export class JapanMap {
       const from = snap.towns[order.from];
       const to = snap.towns[order.to];
       if (!from || !to) continue;
-      const line = L.polyline([[from.lat, from.lon], [to.lat, to.lon]], {
+      const points: L.LatLngTuple[] = [[from.lat, from.lon], [to.lat, to.lon]];
+      L.polyline(points, { color: "#f6e6c2", weight: 6, opacity: 0.7, interactive: false }).addTo(this.orderLayer);
+      const line = L.polyline(points, {
         color: "#8e2c20",
         weight: 3,
-        opacity: 0.85,
+        opacity: 0.95,
         dashArray: order.sea ? "2 7" : "8 5",
       });
       line.bindTooltip(`${Math.round(order.troops).toLocaleString("ja-JP")}兵 ${order.sea ? "（海路）" : ""}`, {

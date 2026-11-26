@@ -1,6 +1,6 @@
 # 47国志 Wasm版
 
-『47国志』に着想を得た、ブラウザで遊べる都道府県統一シミュレーションです。simulation（地図・内政・合戦・CPU・外交・知事選）は **AssemblyScript → WebAssembly** で動き、画面は TypeScript + Leaflet で描いています。
+『47国志』に着想を得た、ブラウザで遊べる都道府県統一シミュレーションです。simulation（地図・内政・合戦・CPU・外交・知事選）は **AssemblyScript → WebAssembly** で動き、画面は TypeScript + Leaflet + Three.js で描いています。HOI4風の軍事UI、地形/航空モード、3D部隊表示を備えています。
 
 > 非公式のファンメイド作品です。元ゲームのデータ・画像・コードは使っていません。日本の行政界・人口は実データを使用しています。
 
@@ -14,6 +14,8 @@
 - 季節、兵糧、士気、勢い、補給線、知事選、順位
 - ローカル自動セーブ、JSONセーブの書き出し／読み込み
 - 戦果・参謀の進言・人材・名産の表示とカットイン演出
+- 政治／地形／航空の地図モード、くっきりした国境と勢力色
+- Three.js による3D歩兵・艦船の表示（ズーム連動、表示切替可）
 
 ## データ出典
 
@@ -92,6 +94,7 @@ engine/
 src/
   engine.ts   Wasmローダーとセーブ／リプレイ
   map.ts      Leaflet地図と実行政界の描画
+  units3d.ts  Three.jsによる3D部隊の描画
   main.ts     UIと操作
   style.css
 scripts/

@@ -51,7 +51,12 @@
         <section class="map-area">
           <div class="map-toolbar">
             <span id="mapTitle">全国</span>
-            <span class="map-hint">市町村を押して命令 / 地理院タイル＋実行政界</span>
+            <span class="map-modes">
+              <button class="small selected" data-action="tile" data-mode="std">政治</button>
+              <button class="small" data-action="tile" data-mode="terrain">地形</button>
+              <button class="small" data-action="tile" data-mode="photo">航空</button>
+              <button class="small selected" data-action="units3d">3D部隊</button>
+            </span>
             <span class="map-tools">
               <button class="small" data-action="mapReset">全国表示</button>
               <button class="small" data-action="mapFocus">本拠</button>
