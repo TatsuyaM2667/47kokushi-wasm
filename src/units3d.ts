@@ -30,8 +30,8 @@ interface MarchEntry {
   speed: number;
 }
 
-const MAX_UNITS = 40;
-const MAX_MARCHERS = 24;
+const MAX_UNITS = 28;
+const MAX_MARCHERS = 18;
 
 function placed(
   geometry: THREE.BufferGeometry,
@@ -88,6 +88,8 @@ export class Units3D {
   }[] = [];
   private cachedZoomScale = 1;
   private lastFrame = 0;
+  private dirty = true;
+  private lastDataKey = "";
   private readonly infantryColor: THREE.InstancedMesh;
   private readonly infantryDetail: THREE.InstancedMesh;
   private readonly shipColor: THREE.InstancedMesh;
@@ -96,7 +98,6 @@ export class Units3D {
   private readonly marchers: THREE.InstancedMesh;
   private readonly ring: THREE.Mesh;
   private readonly flag: THREE.Mesh;
-  private readonly flagBase: Float32Array;
   private readonly flagCanvas = document.createElement("canvas");
   private readonly flagTexture = new THREE.CanvasTexture(this.flagCanvas);
   private readonly ringMaterial = new THREE.MeshBasicMaterial({
@@ -247,14 +248,11 @@ export class Units3D {
     this.scene.add(this.ring);
     this.flagCanvas.width = 256;
     this.flagCanvas.height = 128;
-    const flagGeometry = new THREE.PlaneGeometry(11, 6, 8, 2);
-    this.flagBase = Float32Array.from(
-      flagGeometry.attributes.position.array as ArrayLike<number>,
-    );
+    const flagGeometry = new THREE.PlaneGeometry(11, 6);
     this.flag = new THREE.Mesh(flagGeometry, this.flagMaterial);
     this.flag.visible = false;
     this.scene.add(this.flag);
-    this.map.on("move zoom resize", () => this.sync());
+    this.map.on("move zoom resize", () => this.sync(true));
     this.resize();
     this.animate();
   }
@@ -275,6 +273,7 @@ export class Units3D {
     this.entries.length = 0;
     this.marches.length = 0;
     this.selectedId = -1;
+    this.dirty = true;
   }
 
   setFlagLabel(label: string, color: string): void {
@@ -299,92 +298,109 @@ export class Units3D {
     ctx.textBaseline = "middle";
     ctx.fillText(text || "◈", 128, 60, 224);
     this.flagTexture.needsUpdate = true;
+    this.dirty = true;
   }
 
   update(snap: Snapshot, selectedTown: number): void {
-    const previous = new Map(
-      this.entries.map((entry) => [
-        entry.id,
-        { x: entry.currentX, y: entry.currentY, scale: entry.currentScale },
-      ]),
-    );
-    this.clear();
-    this.lastTowns = new Map(
-      snap.towns.map((town) => [town.id, { lat: town.lat, lon: town.lon }]),
-    );
-    const towns = snap.towns
-      .filter((town) => town.tr >= 1200 || town.id === selectedTown)
-      .sort((a, b) => b.tr - a.tr)
-      .slice(0, MAX_UNITS);
-    if (!towns.some((town) => town.id === selectedTown)) {
-      const selected = snap.towns[selectedTown];
-      if (selected) towns.push(selected);
+    let hash = 0;
+    for (const town of snap.towns) {
+      hash = (Math.imul(hash, 31) + town.o * 7 + town.tr) | 0;
     }
-    let infantryIndex = 0;
-    let shipIndex = 0;
-    for (const town of towns) {
-      const kind: UnitKind =
-        town.po === 1 && town.tr >= 3000 && town.id % 3 === 0
-          ? "ship"
-          : "infantry";
-      const instanceIndex = kind === "ship" ? shipIndex++ : infantryIndex++;
-      const entry: UnitEntry = {
-        id: town.id,
-        kind,
-        color: colorOf(town.o),
-        baseScale: Math.min(1.35, 0.8 + Math.log10(1 + town.tr) / 12),
-        phase: town.id * 0.37,
-        instanceIndex,
-        targetX: 0,
-        targetY: 0,
-        targetScale: 1,
-        currentX: 0,
-        currentY: 0,
-        currentScale: 1,
-      };
-      this.entries.push(entry);
-      this.color.set(entry.color);
-      if (kind === "ship") this.shipColor.setColorAt(instanceIndex, this.color);
-      else this.infantryColor.setColorAt(instanceIndex, this.color);
-      if (town.id === selectedTown) this.selectedId = town.id;
-    }
-    this.infantryColor.count = Math.min(infantryIndex, MAX_UNITS);
-    this.infantryDetail.count = this.infantryColor.count;
-    this.shipColor.count = Math.min(shipIndex, MAX_UNITS);
-    this.shipDetail.count = this.shipColor.count;
-    this.shadows.count = Math.min(this.entries.length, MAX_UNITS);
-    if (this.infantryColor.instanceColor)
-      this.infantryColor.instanceColor.needsUpdate = true;
-    if (this.shipColor.instanceColor)
-      this.shipColor.instanceColor.needsUpdate = true;
+    const ordersKey = snap.orders
+      .map((order) => `${order.from}:${order.to}:${order.eta}`)
+      .join(",");
+    const dataKey = `${snap.turn}|${hash}|${ordersKey}`;
+    if (dataKey !== this.lastDataKey) {
+      this.lastDataKey = dataKey;
+      const previous = new Map(
+        this.entries.map((entry) => [
+          entry.id,
+          { x: entry.currentX, y: entry.currentY, scale: entry.currentScale },
+        ]),
+      );
+      this.clear();
+      this.lastTowns = new Map(
+        snap.towns.map((town) => [town.id, { lat: town.lat, lon: town.lon }]),
+      );
+      const towns = snap.towns
+        .filter((town) => town.tr >= 1200 || town.id === selectedTown)
+        .sort((a, b) => b.tr - a.tr)
+        .slice(0, MAX_UNITS);
+      if (!towns.some((town) => town.id === selectedTown)) {
+        const selected = snap.towns[selectedTown];
+        if (selected) towns.push(selected);
+      }
+      let infantryIndex = 0;
+      let shipIndex = 0;
+      for (const town of towns) {
+        const kind: UnitKind =
+          town.po === 1 && town.tr >= 3000 && town.id % 3 === 0
+            ? "ship"
+            : "infantry";
+        const instanceIndex = kind === "ship" ? shipIndex++ : infantryIndex++;
+        const entry: UnitEntry = {
+          id: town.id,
+          kind,
+          color: colorOf(town.o),
+          baseScale: Math.min(1.35, 0.8 + Math.log10(1 + town.tr) / 12),
+          phase: town.id * 0.37,
+          instanceIndex,
+          targetX: 0,
+          targetY: 0,
+          targetScale: 1,
+          currentX: 0,
+          currentY: 0,
+          currentScale: 1,
+        };
+        this.entries.push(entry);
+        this.color.set(entry.color);
+        if (kind === "ship") this.shipColor.setColorAt(instanceIndex, this.color);
+        else this.infantryColor.setColorAt(instanceIndex, this.color);
+      }
+      this.infantryColor.count = Math.min(infantryIndex, MAX_UNITS);
+      this.infantryDetail.count = this.infantryColor.count;
+      this.shipColor.count = Math.min(shipIndex, MAX_UNITS);
+      this.shipDetail.count = this.shipColor.count;
+      this.shadows.count = Math.min(this.entries.length, MAX_UNITS);
+      if (this.infantryColor.instanceColor)
+        this.infantryColor.instanceColor.needsUpdate = true;
+      if (this.shipColor.instanceColor)
+        this.shipColor.instanceColor.needsUpdate = true;
 
-    let marchIndex = 0;
-    for (const [index, order] of snap.orders.slice(0, 8).entries()) {
-      const from = snap.towns[order.from];
-      const to = snap.towns[order.to];
-      if (!from || !to) continue;
-      const march: MarchEntry = {
-        from: { lat: from.lat, lon: from.lon },
-        to: { lat: to.lat, lon: to.lon },
-        color: colorOf(from.o),
-        phase: (index * 0.19) % 1,
-        speed: order.sea ? 0.09 : 0.13,
-      };
-      this.marches.push(march);
-      this.color.set(march.color);
-      for (let i = 0; i < 3; i++)
-        this.marchers.setColorAt(marchIndex++, this.color);
-    }
-    this.marchers.count = Math.min(marchIndex, MAX_MARCHERS);
-    if (this.marchers.instanceColor) this.marchers.instanceColor.needsUpdate = true;
+      let marchIndex = 0;
+      for (const [index, order] of snap.orders.slice(0, 6).entries()) {
+        const from = snap.towns[order.from];
+        const to = snap.towns[order.to];
+        if (!from || !to) continue;
+        const march: MarchEntry = {
+          from: { lat: from.lat, lon: from.lon },
+          to: { lat: to.lat, lon: to.lon },
+          color: colorOf(from.o),
+          phase: (index * 0.19) % 1,
+          speed: order.sea ? 0.09 : 0.13,
+        };
+        this.marches.push(march);
+        this.color.set(march.color);
+        for (let i = 0; i < 3; i++)
+          this.marchers.setColorAt(marchIndex++, this.color);
+      }
+      this.marchers.count = Math.min(marchIndex, MAX_MARCHERS);
+      if (this.marchers.instanceColor) this.marchers.instanceColor.needsUpdate = true;
 
-    this.sync();
+      this.sync();
+      for (const entry of this.entries) {
+        const old = previous.get(entry.id);
+        entry.currentX = old?.x ?? entry.targetX;
+        entry.currentY = old?.y ?? entry.targetY;
+        entry.currentScale = old?.scale ?? entry.targetScale;
+      }
+    }
+    this.selectedId = -1;
     for (const entry of this.entries) {
-      const old = previous.get(entry.id);
-      entry.currentX = old?.x ?? entry.targetX;
-      entry.currentY = old?.y ?? entry.targetY;
-      entry.currentScale = old?.scale ?? entry.targetScale;
+      if (entry.id === selectedTown) this.selectedId = entry.id;
     }
+    this.sync();
+    this.dirty = true;
   }
 
   resize(): void {
@@ -396,10 +412,10 @@ export class Units3D {
     this.camera.top = height;
     this.camera.bottom = 0;
     this.camera.updateProjectionMatrix();
-    this.sync();
+    this.sync(true);
   }
 
-  sync(): void {
+  sync(snapToTarget = false): void {
     const height = this.container.clientHeight;
     const zoom = this.map.getZoom();
     const zoomScale = Math.min(
@@ -414,6 +430,11 @@ export class Units3D {
       entry.targetX = point.x;
       entry.targetY = height - point.y;
       entry.targetScale = entry.baseScale * zoomScale;
+      if (snapToTarget) {
+        entry.currentX = entry.targetX;
+        entry.currentY = entry.targetY;
+        entry.currentScale = entry.targetScale;
+      }
     }
     this.marchPoints.length = 0;
     for (const march of this.marches) {
@@ -429,6 +450,7 @@ export class Units3D {
         toY: height - to.y,
       });
     }
+    this.dirty = true;
   }
 
   setVisible(visible: boolean): void {
@@ -444,11 +466,18 @@ export class Units3D {
     requestAnimationFrame(this.animate);
     if (!this.visible) return;
     const now = performance.now();
-    if (now - this.lastFrame < 1000 / 30) return;
+    if (now - this.lastFrame < 1000 / 24) return;
     this.lastFrame = now;
+    const settling = this.entries.some(
+      (entry) =>
+        Math.abs(entry.targetX - entry.currentX) > 0.25 ||
+        Math.abs(entry.targetY - entry.currentY) > 0.25 ||
+        Math.abs(entry.targetScale - entry.currentScale) > 0.002,
+    );
+    if (!this.dirty && !settling && this.marches.length === 0) return;
     const delta = Math.min(this.clock.getDelta(), 0.1);
     const time = this.clock.elapsedTime;
-    const damping = this.reduceMotion ? 1 : 1 - Math.exp(-delta * 9);
+    const damping = this.reduceMotion ? 1 : 1 - Math.exp(-delta * 14);
     let infantry = 0;
     let ships = 0;
     let shadowIndex = 0;
@@ -456,21 +485,10 @@ export class Units3D {
       entry.currentX += (entry.targetX - entry.currentX) * damping;
       entry.currentY += (entry.targetY - entry.currentY) * damping;
       entry.currentScale += (entry.targetScale - entry.currentScale) * damping;
-      const breath = this.reduceMotion
-        ? 1
-        : 1 + Math.sin(time * 1.35 + entry.phase) * 0.012;
-      const scale = entry.currentScale * breath;
-      const roll = this.reduceMotion
-        ? 0
-        : Math.sin(time * 1.9 + entry.phase) * 0.022;
-      this.position.set(
-        entry.currentX,
-        entry.currentY,
-        this.reduceMotion ? 0 : Math.sin(time * 1.15 + entry.phase) * 0.9,
-      );
-      this.euler.set(0, 0, roll);
+      this.position.set(entry.currentX, entry.currentY, 0);
+      this.euler.set(0, 0, 0);
       this.quaternion.setFromEuler(this.euler);
-      this.scale.setScalar(scale);
+      this.scale.setScalar(entry.currentScale);
       this.matrix.compose(this.position, this.quaternion, this.scale);
       if (entry.kind === "ship") {
         this.shipColor.setMatrixAt(ships, this.matrix);
@@ -482,9 +500,7 @@ export class Units3D {
         infantry++;
       }
       this.position.z = -6;
-      this.scale.set(scale * 1.5, scale * 0.58, 1);
-      this.euler.set(0, 0, 0);
-      this.quaternion.setFromEuler(this.euler);
+      this.scale.set(entry.currentScale * 1.5, entry.currentScale * 0.58, 1);
       this.matrix.compose(this.position, this.quaternion, this.scale);
       this.shadows.setMatrixAt(shadowIndex++, this.matrix);
     }
@@ -498,29 +514,14 @@ export class Units3D {
     this.ring.visible = Boolean(selected);
     this.flag.visible = Boolean(selected);
     if (selected) {
-      const pulse = this.reduceMotion
-        ? 1
-        : 1 + Math.sin(time * 2.1 + selected.phase) * 0.05;
       this.ring.position.set(selected.currentX, selected.currentY, -4);
-      this.ring.scale.set(1.5 * pulse, 0.62 * pulse, 1);
+      this.ring.scale.set(1.5, 0.62, 1);
       this.flag.position.set(
         selected.currentX - 8 * selected.currentScale,
         selected.currentY + 17 * selected.currentScale,
         4.5,
       );
       this.flag.scale.setScalar(selected.currentScale);
-      if (!this.reduceMotion) {
-        const attribute = this.flag.geometry.attributes.position as THREE.BufferAttribute;
-        const array = attribute.array as Float32Array;
-        for (let i = 0; i < this.flagBase.length; i += 3) {
-          const x = this.flagBase[i];
-          array[i + 2] =
-            Math.sin(time * 3.2 + x * 0.55 + selected.phase) *
-            1.15 *
-            ((x + 5.5) / 11);
-        }
-        attribute.needsUpdate = true;
-      }
     }
 
     let marchIndex = 0;
@@ -548,5 +549,6 @@ export class Units3D {
     }
     if (this.marchers.count) this.marchers.instanceMatrix.needsUpdate = true;
     this.renderer.render(this.scene, this.camera);
+    this.dirty = false;
   };
 }

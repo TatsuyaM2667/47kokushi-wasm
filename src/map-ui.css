@@ -31,10 +31,11 @@
 .map-toolbar button.selected { background: var(--color-accent-dim); border-color: var(--color-accent); color: var(--color-accent-bright); outline: var(--line-width) solid var(--color-accent); outline-offset: calc(var(--line-width) * -1); }
 
 #map { z-index: var(--z-map); }
-#map[data-layer="std"] .leaflet-tile-pane { filter: grayscale(1) invert(1) brightness(0.36) contrast(1.18); transition: filter var(--motion-slow) var(--ease-in-out); }
-#map[data-layer="terrain"] .leaflet-tile-pane { filter: grayscale(0.8) invert(1) brightness(0.5) contrast(1.15); transition: filter var(--motion-slow) var(--ease-in-out); }
-#map[data-layer="photo"] .leaflet-tile-pane { filter: brightness(0.48) saturate(0.7) contrast(1.08); transition: filter var(--motion-slow) var(--ease-in-out); }
-#map .leaflet-overlay-pane canvas { transition: opacity var(--motion-mid) var(--ease-in-out); }
+#map[data-layer="std"] .leaflet-tile-pane { filter: brightness(0.5) saturate(0.35); }
+#map[data-layer="terrain"] .leaflet-tile-pane { filter: brightness(0.62) saturate(0.55); }
+#map[data-layer="photo"] .leaflet-tile-pane { filter: brightness(0.55) saturate(0.7); }
+#map[data-moving="1"] .leaflet-tile-pane { filter: brightness(0.72) saturate(0.35); }
+#map .leaflet-overlay-pane canvas { transition: none; }
 .units3d-layer { z-index: var(--z-units); }
 
 .map-legend {

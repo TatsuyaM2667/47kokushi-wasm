@@ -35,8 +35,8 @@ const TILE_URLS: Record<TileMode, string> = {
 };
 
 export function colorOf(id: number): string {
-  if (id <= 0) return "#2a322d";
-  if (id === activePlayer) return "#5d8fbd";
+  if (id <= 0) return MAP_COLORS.neutral;
+  if (id === activePlayer) return MAP_COLORS.player;
   const hue = Math.round((id * 137.508 + 22) % 360);
   const saturation = 23 + (id % 3) * 5;
   const lightness = 34 + (id % 4) * 3;
@@ -82,6 +82,24 @@ function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+const MAP_COLORS = {
+  boundary: cssVar("--color-map-boundary"),
+  highlight: cssVar("--color-map-highlight"),
+  march: cssVar("--color-map-march"),
+  neutral: cssVar("--color-map-neutral"),
+  player: cssVar("--color-map-player"),
+};
+
+function pathKey(style: L.PathOptions): string {
+  return [
+    style.color,
+    style.weight,
+    style.opacity,
+    style.fillColor,
+    style.fillOpacity,
+  ].join("|");
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(new URL(url, document.baseURI));
   if (!response.ok) throw new Error(`地図データの読み込みに失敗しました (${response.status})`);
@@ -112,11 +130,11 @@ function townStyle(
   const marching = marchingIds.has(id);
   const political = tileMode === "std";
   return {
-    color: selected ? "#ffd35c" : marching ? "#d59a5e" : "#080b09",
-    weight: selected ? 3.4 : marching ? 2.2 : 1.3,
-    opacity: political ? 0.98 : 0.72,
+    color: selected ? MAP_COLORS.highlight : marching ? MAP_COLORS.march : MAP_COLORS.boundary,
+    weight: selected ? 3.4 : marching ? 2.2 : 1.1,
+    opacity: political ? 0.98 : 0.9,
     fillColor: colorOf(owner),
-    fillOpacity: political ? (selected ? 0.92 : 0.86) : selected ? 0.46 : 0.18,
+    fillOpacity: political ? (selected ? 0.92 : 0.86) : selected ? 0.72 : 0.42,
     lineJoin: "round",
   };
 }
@@ -129,7 +147,9 @@ export class JapanMap {
   private readonly routes: RouteData[] = [];
   private readonly routePaths = new Map<string, L.Polyline>();
   private readonly layers: L.Path[] = [];
+  private readonly layerStyleKeys: string[] = [];
   private readonly prefPaths: L.Path[] = [];
+  private readonly prefStyleKeys: string[] = [];
   private prefLabels: string[] = PREF_NAMES.slice();
   private prefLayer: L.GeoJSON | null = null;
   private townLayer: L.GeoJSON | null = null;
@@ -153,6 +173,12 @@ export class JapanMap {
       worldCopyJump: false,
     });
     this.map.setView([36.2, 138.2], 5);
+    this.map.on("movestart", () => {
+      this.map.getContainer().dataset.moving = "1";
+    });
+    this.map.on("moveend", () => {
+      delete this.map.getContainer().dataset.moving;
+    });
     this.tileLayer = this.makeTileLayer(this.tileMode).addTo(this.map);
     this.map.getContainer().dataset.layer = this.tileMode;
     this.routeLayer = L.layerGroup();
@@ -195,11 +221,11 @@ export class JapanMap {
     const selected = this.snap?.towns[this.selectedTown]?.p === pref;
     const political = this.tileMode === "std";
     return {
-      color: selected ? "#ffd35c" : "#080b09",
-      weight: selected ? 3.2 : 2,
+      color: selected ? MAP_COLORS.highlight : MAP_COLORS.boundary,
+      weight: selected ? 3.2 : 1.8,
       opacity: 0.98,
       fillColor: colorOf(owner),
-      fillOpacity: political ? (selected ? 0.94 : 0.88) : selected ? 0.4 : 0.16,
+      fillOpacity: political ? (selected ? 0.94 : 0.88) : selected ? 0.72 : 0.42,
       lineJoin: "round",
     };
   }
@@ -214,21 +240,30 @@ export class JapanMap {
     for (let id = 0; id < this.layers.length; id++) {
       const path = this.layers[id];
       if (!path) continue;
-      path.setStyle(
-        townStyle(
-          {
-            properties: { id, pref: this.snap.towns[id]?.p ?? 1 },
-          } as TownFeature,
-          this.snap,
-          this.selectedTown,
-          this.tileMode,
-          marchingIds,
-        ),
+      const style = townStyle(
+        {
+          properties: { id, pref: this.snap.towns[id]?.p ?? 1 },
+        } as TownFeature,
+        this.snap,
+        this.selectedTown,
+        this.tileMode,
+        marchingIds,
       );
+      const key = pathKey(style);
+      if (this.layerStyleKeys[id] !== key) {
+        this.layerStyleKeys[id] = key;
+        path.setStyle(style);
+      }
     }
     for (let pref = 1; pref < this.prefPaths.length; pref++) {
       const path = this.prefPaths[pref];
-      if (path) path.setStyle(this.prefStyle({ properties: { pref } } as PrefFeature));
+      if (!path) continue;
+      const style = this.prefStyle({ properties: { pref } } as PrefFeature);
+      const key = pathKey(style);
+      if (this.prefStyleKeys[pref] !== key) {
+        this.prefStyleKeys[pref] = key;
+        path.setStyle(style);
+      }
     }
   }
 
@@ -244,6 +279,8 @@ export class JapanMap {
       if (this.prefLayer) this.prefLayer.addTo(this.map);
     }
     this.lastStyleKey = "";
+    this.layerStyleKeys.length = 0;
+    this.prefStyleKeys.length = 0;
     this.refreshStyles();
   }
 

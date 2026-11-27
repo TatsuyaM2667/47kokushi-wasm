@@ -49,6 +49,11 @@
   --color-route-highway: #d39845;
   --color-route-shinkansen: #d8c27d;
   --color-route-rail: #7c9c8b;
+  --color-map-boundary: rgba(236, 228, 208, 0.3);
+  --color-map-highlight: #f3d68d;
+  --color-map-march: #d59a5e;
+  --color-map-neutral: #3a4740;
+  --color-map-player: #5d8fbd;
 
   --radius-0: 0;
   --radius-1: 0.125rem;
