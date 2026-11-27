@@ -70,6 +70,28 @@ test("月送りで日付が進み、行動力が戻る", async () => {
   assert.ok(next.factions.every((f) => Number.isFinite(f.budget)));
 });
 
+test("武器・戦闘機の調達と航空技術更新が反映される", async () => {
+  const { call } = await createEngine();
+  const before = call("boot", 8, 13, 1, 3);
+  const equipped = call("cmd", 16, 3, 0, 0);
+  assert.equal(equipped.self.equip, before.self.equip + 15);
+  assert.equal(equipped.ap, before.ap - 1);
+  const air = call("cmd", 16, 2, 1, 0);
+  assert.equal(air.self.air, equipped.self.air + 2);
+  const upgraded = call("cmd", 17, 1, 1, 0);
+  assert.equal(upgraded.self.airTech, 1);
+  assert.ok(upgraded.self.budget < air.self.budget);
+});
+
+test("慣習・歴史に基づく初期関係度が設定される", async () => {
+  const { call } = await createEngine();
+  const s = call("boot", 42, 13, 1, 1);
+  const idx = (a, b) => a * 48 + b;
+  assert.ok(s.rel[idx(13, 14)] > 0);
+  assert.ok(s.rel[idx(7, 45)] < 0);
+  assert.ok(s.rel[idx(35, 45)] > 0);
+});
+
 test("同じ操作を再生すると同じ状態になる", async () => {
   const { call } = await createEngine();
   const setup = [99, 31, 0, 3];
@@ -98,6 +120,10 @@ test("10年分を回しても壊れない", async () => {
     assert.ok(Number.isFinite(s.self.budget));
     assert.ok(Number.isFinite(s.self.support));
     assert.equal(s.towns.length, s.towns.length);
+  }
+  for (const f of s.factions) {
+    if (f.alive && f.towns > 0)
+      assert.ok(s.towns.some((t) => t.o === f.id && t.cp), `${f.id} の県庁が見つからない`);
   }
   assert.ok(s.turn > 0);
   assert.ok(s.news.length > 0);

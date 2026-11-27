@@ -1,92 +1,130 @@
 <!doctype html>
 <html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-    <meta name="theme-color" content="#1e2724" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%23232824'/%3E%3Ctext x='32' y='43' font-size='34' text-anchor='middle' fill='%23c7a34c'%3E47%3C/text%3E%3C/svg%3E" />
-    <title>47国志 - Wasm版</title>
-  </head>
-  <body>
-    <div id="loading" class="loading">日本をつくっています…</div>
+    <head>
+        <meta charset="UTF-8" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1.0, maximum-scale=1.0"
+        />
+        <meta name="theme-color" content="#1e2724" />
+        <link
+            rel="icon"
+            href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%23232824'/%3E%3Ctext x='32' y='43' font-size='34' text-anchor='middle' fill='%23c7a34c'%3E47%3C/text%3E%3C/svg%3E"
+        />
+        <title>47国志 - Wasm版</title>
+    </head>
+    <body>
+        <div id="loading" class="loading">日本をつくっています…</div>
 
-    <div id="start" class="start hidden">
-      <div class="start-card">
-        <div class="crest">47</div>
-        <h1>47国志 <small>Wasm版</small></h1>
-        <p class="lead">都道府県をひとつ選び、市町村を取り合って天下をまとめろ。</p>
-
-        <div class="setup-group">
-          <h2>県を選ぶ <span class="hint">★が多いほど難しい</span></h2>
-          <div id="prefGrid" class="pref-grid"></div>
+        <div id="start" class="start hidden">
+            <div class="start-shell">
+                <section class="start-brief">
+                    <div class="brand-row">
+                        <span class="brand-seal">47</span>
+                        <span class="brand-code">KOKUSHI // WASM</span>
+                    </div>
+                    <p class="eyebrow">CAMPAIGN BRIEFING — 2027</p>
+                    <h1>日本を、<em>ひとつに。</em></h1>
+                    <p class="lead">
+                        都道府県をひとつ選び、1,741の市町村を取り合って天下をまとめろ。
+                    </p>
+                    <dl class="brief-stats">
+                        <div><dt>領土</dt><dd>47</dd></div>
+                        <div><dt>市町村</dt><dd>1,741</dd></div>
+                        <div><dt>演算</dt><dd>WASM</dd></div>
+                    </dl>
+                    <p class="footnote">
+                        非公式作品。地図・人口は実データ（国土数値情報・国勢調査）を使用。
+                    </p>
+                </section>
+                <section class="start-console">
+                    <header class="console-head">
+                        <span>CAMPAIGN SETUP</span><span>STEP 01—03</span>
+                    </header>
+                    <div class="console-section">
+                        <h2><span class="section-index">01</span>県を選ぶ<small>★が多いほど難しい</small></h2>
+                        <div id="prefGrid" class="pref-grid"></div>
+                    </div>
+                    <div class="console-grid">
+                        <div class="console-section">
+                            <h2><span class="section-index">02</span>期間</h2>
+                            <div id="lengthOptions" class="choice-row"></div>
+                        </div>
+                        <div class="console-section">
+                            <h2><span class="section-index">03</span>難易度</h2>
+                            <div id="difficultyOptions" class="choice-row"></div>
+                        </div>
+                    </div>
+                    <div class="start-actions">
+                        <button class="primary" data-action="start">天下統一を始める</button>
+                        <button data-action="continue" id="continueBtn">つづきから</button>
+                    </div>
+                </section>
+            </div>
         </div>
 
-        <div class="setup-row">
-          <div class="setup-group">
-            <h2>遊ぶ長さ</h2>
-            <div id="lengthOptions" class="choice-row"></div>
-          </div>
-          <div class="setup-group">
-            <h2>難易度</h2>
-            <div id="difficultyOptions" class="choice-row"></div>
-          </div>
+        <div id="app" class="app hidden">
+            <header id="hud" class="hud"></header>
+            <div id="ticker" class="ticker"></div>
+            <main class="layout">
+                <aside class="side left">
+                    <div class="side-tabs" id="leftTabs"></div>
+                    <div id="leftPanel" class="side-body"></div>
+                </aside>
+                <section class="map-area">
+                    <div class="map-toolbar">
+                        <div class="map-heading">
+                            <span>THEATER / JAPAN</span>
+                            <strong id="mapTitle">全国</strong>
+                        </div>
+                        <div class="map-modes" role="group" aria-label="地図レイヤー">
+                            <span class="mode-label">LAYER</span>
+                            <button class="small selected" data-action="tile" data-mode="std">政治</button>
+                            <button class="small" data-action="tile" data-mode="terrain">地形</button>
+                            <button class="small" data-action="tile" data-mode="photo">航空</button>
+                            <button class="small selected" data-action="units3d">3D部隊</button>
+                        </div>
+                        <div class="map-tools">
+                            <button class="small" data-action="mapReset">全国</button>
+                            <button class="small" data-action="mapFocus">本拠</button>
+                        </div>
+                    </div>
+                    <div id="map" role="application" aria-label="日本の市町村地図"></div>
+                    <div id="mapLegend" class="map-legend"></div>
+                    <div id="mapReadout" class="map-readout"></div>
+                    <div id="mapFooter" class="map-footer"></div>
+                </section>
+                <aside class="side right">
+                    <div id="rightPanel" class="side-body"></div>
+                </aside>
+            </main>
+            <footer class="bottom-bar">
+                <div id="bottomInfo"></div>
+                <button class="primary month-button" data-action="next">
+                    月を進める ▶
+                </button>
+            </footer>
         </div>
 
-        <div class="start-actions">
-          <button class="primary" data-action="start">天下統一を始める</button>
-          <button data-action="continue" id="continueBtn">つづきから</button>
+        <div id="modal" class="modal hidden">
+            <div class="modal-card">
+                <h2 id="modalTitle"></h2>
+                <div id="modalBody"></div>
+                <div class="modal-actions">
+                    <button class="primary" data-action="closeModal">
+                        次へ
+                    </button>
+                </div>
+            </div>
         </div>
-        <p class="footnote">このゲームは『47国志』に着想を得た非公式の作品です。地図・人口は実データ（国土数値情報・国勢調査）を使用しています。</p>
-      </div>
-    </div>
 
-    <div id="app" class="app hidden">
-      <header id="hud" class="hud"></header>
-      <div id="ticker" class="ticker"></div>
-      <main class="layout">
-        <aside class="side left">
-          <div class="side-tabs" id="leftTabs"></div>
-          <div id="leftPanel" class="side-body"></div>
-        </aside>
-        <section class="map-area">
-          <div class="map-toolbar">
-            <span id="mapTitle">全国</span>
-            <span class="map-modes">
-              <button class="small selected" data-action="tile" data-mode="std">政治</button>
-              <button class="small" data-action="tile" data-mode="terrain">地形</button>
-              <button class="small" data-action="tile" data-mode="photo">航空</button>
-              <button class="small selected" data-action="units3d">3D部隊</button>
-            </span>
-            <span class="map-tools">
-              <button class="small" data-action="mapReset">全国表示</button>
-              <button class="small" data-action="mapFocus">本拠</button>
-            </span>
-          </div>
-          <div id="map" role="application" aria-label="日本の市町村地図"></div>
-          <div id="mapFooter" class="map-footer"></div>
-        </section>
-        <aside class="side right">
-          <div id="rightPanel" class="side-body"></div>
-        </aside>
-      </main>
-      <footer class="bottom-bar">
-        <div id="bottomInfo"></div>
-        <button class="primary month-button" data-action="next">月を進める ▶</button>
-      </footer>
-    </div>
+        <input
+            id="fileInput"
+            type="file"
+            accept="application/json,.json"
+            class="hidden"
+        />
 
-    <div id="modal" class="modal hidden">
-      <div class="modal-card">
-        <h2 id="modalTitle"></h2>
-        <div id="modalBody"></div>
-        <div class="modal-actions">
-          <button class="primary" data-action="closeModal">次へ</button>
-        </div>
-      </div>
-    </div>
-
-    <input id="fileInput" type="file" accept="application/json,.json" class="hidden" />
-
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+        <script type="module" src="/src/main.ts"></script>
+    </body>
 </html>

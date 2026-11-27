@@ -1,0 +1,123 @@
+.map-area {
+  border: var(--line-width) solid var(--color-line-strong);
+  border-radius: var(--radius-0);
+  background: var(--color-map-base);
+  box-shadow: var(--shadow-inset);
+}
+
+.map-toolbar {
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  background: linear-gradient(180deg, var(--color-surface-3), var(--color-surface));
+  border-bottom: var(--line-width-strong) solid var(--color-accent);
+  z-index: var(--z-map-ui);
+}
+.map-heading { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.map-heading span { color: var(--color-text-faint); font: var(--step--2)/1 var(--font-mono); letter-spacing: 0.16em; white-space: nowrap; }
+.map-heading strong { color: var(--color-accent-bright); font: 700 var(--step-0)/1 var(--font-display); letter-spacing: 0.06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.map-modes, .map-tools { display: flex; align-items: center; gap: var(--space-1); }
+.mode-label { color: var(--color-text-faint); font: var(--step--2)/1 var(--font-mono); letter-spacing: 0.16em; }
+.map-toolbar button {
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-surface);
+  border-color: var(--color-line-strong);
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--step--2);
+  clip-path: polygon(var(--space-1) 0, 100% 0, calc(100% - var(--space-1)) 100%, 0 100%);
+}
+.map-toolbar button:hover:not(:disabled) { background: var(--color-surface-hover); color: var(--color-text); }
+.map-toolbar button.selected { background: var(--color-accent-dim); border-color: var(--color-accent); color: var(--color-accent-bright); outline: var(--line-width) solid var(--color-accent); outline-offset: calc(var(--line-width) * -1); }
+
+#map { z-index: var(--z-map); }
+#map[data-layer="std"] .leaflet-tile-pane { filter: grayscale(1) invert(1) brightness(0.36) contrast(1.18); transition: filter var(--motion-slow) var(--ease-in-out); }
+#map[data-layer="terrain"] .leaflet-tile-pane { filter: grayscale(0.8) invert(1) brightness(0.5) contrast(1.15); transition: filter var(--motion-slow) var(--ease-in-out); }
+#map[data-layer="photo"] .leaflet-tile-pane { filter: brightness(0.48) saturate(0.7) contrast(1.08); transition: filter var(--motion-slow) var(--ease-in-out); }
+#map .leaflet-overlay-pane canvas { transition: opacity var(--motion-mid) var(--ease-in-out); }
+.units3d-layer { z-index: var(--z-units); }
+
+.map-legend {
+  position: absolute;
+  top: 3.25rem;
+  left: var(--space-2);
+  z-index: var(--z-map-ui);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(100% - var(--space-6));
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-map-footer);
+  border: var(--line-width) solid var(--color-line-strong);
+  box-shadow: var(--shadow-panel);
+  pointer-events: none;
+}
+.legend-title { color: var(--color-accent); font: var(--step--2)/1 var(--font-mono); letter-spacing: 0.16em; }
+.legend-item { display: flex; align-items: center; gap: var(--space-1); color: var(--color-text-muted); font: var(--step--2)/1 var(--font-ui); white-space: nowrap; }
+.legend-item i { width: 0.75rem; height: 0.75rem; border: var(--line-width) solid var(--color-line-strong); }
+.legend-border i { width: 1rem; height: 0; border-top: var(--line-width-strong) solid var(--color-text); }
+.legend-order i { width: 1rem; height: 0; border-top: var(--line-width-strong) dashed var(--color-danger-bright); }
+.legend-highway i { width: 1rem; height: 0; border-top: 0.2rem solid var(--color-route-highway); }
+.legend-shinkansen i { width: 1rem; height: 0; border-top: 0.15rem solid var(--color-route-shinkansen); }
+.legend-rail i { width: 1rem; height: 0; border-top: var(--line-width-strong) solid var(--color-route-rail); }
+
+.map-readout {
+  position: absolute;
+  top: 3.25rem;
+  right: var(--space-2);
+  z-index: var(--z-map-ui);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-map-footer);
+  border: var(--line-width) solid var(--color-line-strong);
+  color: var(--color-accent-bright);
+  font: var(--step--2)/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}
+
+.map-footer {
+  left: var(--space-2);
+  bottom: var(--space-2);
+  z-index: var(--z-map-ui);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-map-footer);
+  border-left: var(--line-width-strong) solid var(--color-accent);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--step--2);
+  letter-spacing: 0.04em;
+  border-radius: var(--radius-0);
+}
+
+#map.leaflet-container { background: var(--color-map-base); font-family: var(--font-ui); }
+.leaflet-control-zoom { border: var(--line-width) solid var(--color-line-strong) !important; box-shadow: var(--shadow-panel) !important; }
+.leaflet-control-zoom a {
+  background: var(--color-surface) !important;
+  border-bottom-color: var(--color-line-strong) !important;
+  color: var(--color-accent-bright) !important;
+  font-family: var(--font-mono) !important;
+}
+.leaflet-control-zoom a:hover { background: var(--color-surface-hover) !important; }
+.leaflet-control-attribution { background: var(--color-map-footer) !important; color: var(--color-text-muted) !important; font-family: var(--font-ui); font-size: var(--step--2); }
+.leaflet-control-attribution a { color: var(--color-accent-bright) !important; }
+.leaflet-tooltip.order-tip {
+  background: var(--color-map-footer);
+  border: var(--line-width) solid var(--color-danger);
+  color: var(--color-danger-bright);
+  font-family: var(--font-mono);
+  font-size: var(--step--2);
+  font-weight: 700;
+  box-shadow: none;
+}
+.leaflet-tooltip.order-tip::before { display: none; }
+
+@media (max-width: 980px) {
+  .map-heading span, .mode-label { display: none; }
+  .map-legend { top: 2.75rem; }
+  .map-readout { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-area *, .map-area *::before { transition-duration: var(--motion-instant) !important; animation-duration: var(--motion-instant) !important; }
+}

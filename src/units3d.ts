@@ -1,14 +1,74 @@
 import * as THREE from "three";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type L from "leaflet";
 import type { Snapshot } from "./types";
 import { colorOf } from "./map";
 
+type UnitKind = "infantry" | "ship";
+
 interface UnitEntry {
   id: number;
-  owner: number;
-  sea: boolean;
+  kind: UnitKind;
+  color: string;
   baseScale: number;
-  group: THREE.Group;
+  phase: number;
+  instanceIndex: number;
+  targetX: number;
+  targetY: number;
+  targetScale: number;
+  currentX: number;
+  currentY: number;
+  currentScale: number;
+}
+
+interface MarchEntry {
+  from: { lat: number; lon: number };
+  to: { lat: number; lon: number };
+  color: string;
+  phase: number;
+  speed: number;
+}
+
+const MAX_UNITS = 40;
+const MAX_MARCHERS = 24;
+
+function placed(
+  geometry: THREE.BufferGeometry,
+  position: [number, number, number],
+  rotation: [number, number, number] = [0, 0, 0],
+): THREE.BufferGeometry {
+  const result = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+  const matrix = new THREE.Matrix4().compose(
+    new THREE.Vector3(...position),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(...rotation)),
+    new THREE.Vector3(1, 1, 1),
+  );
+  result.applyMatrix4(matrix);
+  return result;
+}
+
+function tinted(
+  geometry: THREE.BufferGeometry,
+  color: number,
+): THREE.BufferGeometry {
+  const result = geometry.clone();
+  const count = result.attributes.position.count;
+  const values = new Float32Array(count * 3);
+  const value = new THREE.Color(color);
+  for (let i = 0; i < count; i++) {
+    values[i * 3] = value.r;
+    values[i * 3 + 1] = value.g;
+    values[i * 3 + 2] = value.b;
+  }
+  result.setAttribute("color", new THREE.BufferAttribute(values, 3));
+  return result;
+}
+
+function join(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const geometry = mergeGeometries(parts);
+  if (!geometry) throw new Error("3Dモデルの結合に失敗しました");
+  return geometry;
 }
 
 export class Units3D {
@@ -17,145 +77,314 @@ export class Units3D {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
+  private readonly clock = new THREE.Clock();
   private readonly entries: UnitEntry[] = [];
-  private readonly materials = new Map<string, THREE.MeshStandardMaterial>();
-  private readonly geometry = {
-    body: new THREE.BoxGeometry(9, 13, 6),
-    head: new THREE.SphereGeometry(3.4, 8, 6),
-    helmet: new THREE.CylinderGeometry(4.1, 4.1, 2.6, 8),
-    rifle: new THREE.BoxGeometry(1.5, 14, 1.5),
-    hull: new THREE.BoxGeometry(22, 6, 8),
-    tower: new THREE.BoxGeometry(6, 7, 5),
-    shadow: new THREE.CircleGeometry(14, 20),
-    ring: new THREE.RingGeometry(15, 19, 24),
-  };
-  private readonly shadowMaterial = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28 });
-  private readonly ringMaterial = new THREE.MeshBasicMaterial({ color: 0xffd35c, side: THREE.DoubleSide });
-  private readonly skinMaterial = new THREE.MeshStandardMaterial({ color: 0xd8b18a, roughness: 0.9 });
+  private readonly marches: MarchEntry[] = [];
+  private readonly marchPoints: {
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+  }[] = [];
+  private cachedZoomScale = 1;
+  private lastFrame = 0;
+  private readonly infantryColor: THREE.InstancedMesh;
+  private readonly infantryDetail: THREE.InstancedMesh;
+  private readonly shipColor: THREE.InstancedMesh;
+  private readonly shipDetail: THREE.InstancedMesh;
+  private readonly shadows: THREE.InstancedMesh;
+  private readonly marchers: THREE.InstancedMesh;
+  private readonly ring: THREE.Mesh;
+  private readonly flag: THREE.Mesh;
+  private readonly flagBase: Float32Array;
+  private readonly flagCanvas = document.createElement("canvas");
+  private readonly flagTexture = new THREE.CanvasTexture(this.flagCanvas);
+  private readonly ringMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffd35c,
+    transparent: true,
+    opacity: 0.82,
+    side: THREE.DoubleSide,
+  });
+  private readonly flagMaterial = new THREE.MeshBasicMaterial({
+    map: this.flagTexture,
+    transparent: true,
+    side: THREE.DoubleSide,
+  });
+  private flagLabel = "";
+  private flagColor = "";
+  private readonly matrix = new THREE.Matrix4();
+  private readonly position = new THREE.Vector3();
+  private readonly quaternion = new THREE.Quaternion();
+  private readonly euler = new THREE.Euler();
+  private readonly scale = new THREE.Vector3();
+  private readonly color = new THREE.Color();
+  private selectedId = -1;
   private lastTowns: Map<number, { lat: number; lon: number }> | null = null;
+  private readonly reduceMotion = window.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
   private visible = true;
 
-  constructor(map: L.Map, container: HTMLElement) {
+  private constructor(
+    map: L.Map,
+    container: HTMLElement,
+    renderer: THREE.WebGLRenderer,
+  ) {
     this.map = map;
     this.container = container;
-    const canvas = document.createElement("canvas");
-    canvas.className = "units3d-layer";
-    container.appendChild(canvas);
-    this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer = renderer;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 0.5));
     this.renderer.setClearColor(0x000000, 0);
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.camera = new THREE.OrthographicCamera(0, 1, 1, 0, 0.1, 2000);
     this.camera.position.z = 1000;
-    this.scene.add(new THREE.HemisphereLight(0xf4e7c8, 0x30362f, 1.5));
-    const sun = new THREE.DirectionalLight(0xfff3d6, 1.4);
-    sun.position.set(-200, 300, 500);
-    this.scene.add(sun);
+
+    const torso = new RoundedBoxGeometry(9, 13, 6, 3, 1.6);
+    const pack = new RoundedBoxGeometry(6, 8, 4, 2, 1.2);
+    const leg = new RoundedBoxGeometry(2.6, 8, 3, 2, 0.7);
+    const head = new THREE.SphereGeometry(3.2, 10, 8);
+    const helmet = new THREE.SphereGeometry(
+      4.1,
+      10,
+      7,
+      0,
+      Math.PI * 2,
+      0,
+      Math.PI / 2,
+    );
+    const rimRing = new THREE.TorusGeometry(3.75, 0.55, 5, 12);
+    const rifle = new RoundedBoxGeometry(1.4, 15, 1.4, 2, 0.5);
+    const infantryColorGeometry = join([
+      placed(torso, [0, 2, 0]),
+      placed(pack, [0, 2, -4]),
+      placed(leg, [-2.2, -5, -0.5]),
+      placed(leg, [2.2, -5, -0.5]),
+      placed(helmet, [0, 11.8, 0]),
+      placed(rimRing, [0, 11.9, 0], [Math.PI / 2, 0, 0]),
+    ]);
+    const infantryDetailGeometry = join([
+      placed(tinted(head, 0xd7b18d), [0, 10.5, 0]),
+      placed(tinted(rifle, 0x333a37), [6.5, 3.5, 2.6], [0, 0, -0.42]),
+    ]);
+    infantryColorGeometry.rotateX(0.06);
+    infantryColorGeometry.rotateY(-0.3);
+    infantryDetailGeometry.rotateX(0.06);
+    infantryDetailGeometry.rotateY(-0.3);
+
+    const hull = new RoundedBoxGeometry(24, 6, 9, 3, 2);
+    const deck = new RoundedBoxGeometry(12, 3, 7, 2, 1);
+    const tower = new RoundedBoxGeometry(7, 8, 6, 3, 1.4);
+    const gun = new RoundedBoxGeometry(2, 14, 2, 2, 0.6);
+    const mast = new THREE.CylinderGeometry(0.45, 0.45, 14, 6);
+    const shipColorGeometry = join([
+      placed(hull, [0, -2, 0]),
+      placed(deck, [0, 3, 0]),
+      placed(tower, [-3, 7, 3]),
+    ]);
+    const shipDetailGeometry = join([
+      placed(tinted(gun, 0x333a37), [8, 5, 4], [0, 0, Math.PI / 2.3]),
+      placed(tinted(mast, 0xd8c9a6), [-3, 17, 4]),
+    ]);
+    shipColorGeometry.rotateX(0.1);
+    shipColorGeometry.rotateY(-0.28);
+    shipDetailGeometry.rotateX(0.1);
+    shipDetailGeometry.rotateY(-0.28);
+
+    const colorMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const detailMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+    });
+    this.infantryColor = new THREE.InstancedMesh(
+      infantryColorGeometry,
+      colorMaterial,
+      MAX_UNITS,
+    );
+    this.infantryDetail = new THREE.InstancedMesh(
+      infantryDetailGeometry,
+      detailMaterial,
+      MAX_UNITS,
+    );
+    this.shipColor = new THREE.InstancedMesh(
+      shipColorGeometry,
+      colorMaterial,
+      MAX_UNITS,
+    );
+    this.shipDetail = new THREE.InstancedMesh(
+      shipDetailGeometry,
+      detailMaterial,
+      MAX_UNITS,
+    );
+    this.shadows = new THREE.InstancedMesh(
+      new THREE.CircleGeometry(15, 12),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false,
+      }),
+      MAX_UNITS,
+    );
+    this.marchers = new THREE.InstancedMesh(
+      new RoundedBoxGeometry(4, 6, 3, 2, 1),
+      colorMaterial,
+      MAX_MARCHERS,
+    );
+    for (const mesh of [
+      this.infantryColor,
+      this.infantryDetail,
+      this.shipColor,
+      this.shipDetail,
+      this.shadows,
+      this.marchers,
+    ]) {
+      mesh.frustumCulled = false;
+      mesh.count = 0;
+      this.scene.add(mesh);
+    }
+    this.ring = new THREE.Mesh(new THREE.RingGeometry(16, 20, 32), this.ringMaterial);
+    this.ring.visible = false;
+    this.scene.add(this.ring);
+    this.flagCanvas.width = 256;
+    this.flagCanvas.height = 128;
+    const flagGeometry = new THREE.PlaneGeometry(11, 6, 8, 2);
+    this.flagBase = Float32Array.from(
+      flagGeometry.attributes.position.array as ArrayLike<number>,
+    );
+    this.flag = new THREE.Mesh(flagGeometry, this.flagMaterial);
+    this.flag.visible = false;
+    this.scene.add(this.flag);
     this.map.on("move zoom resize", () => this.sync());
     this.resize();
     this.animate();
   }
 
-  private material(color: string): THREE.MeshStandardMaterial {
-    let material = this.materials.get(color);
-    if (!material) {
-      material = new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.12 });
-      this.materials.set(color, material);
-    }
-    return material;
-  }
-
-  private soldier(color: string, soldiers: number, selected: boolean): THREE.Group {
-    const group = new THREE.Group();
-    const shadow = new THREE.Mesh(this.geometry.shadow, this.shadowMaterial);
-    shadow.position.z = -4;
-    shadow.scale.set(1.5, 0.55, 1);
-    group.add(shadow);
-    if (selected) {
-      const ring = new THREE.Mesh(this.geometry.ring, this.ringMaterial);
-      ring.position.z = -3;
-      ring.scale.set(1.5, 0.62, 1);
-      group.add(ring);
-    }
-    const count = Math.min(3, Math.max(1, soldiers));
-    const material = this.material(color);
-    for (let i = 0; i < count; i++) {
-      const unit = new THREE.Group();
-      unit.position.set((i - (count - 1) / 2) * 11, Math.abs(i - 1) * -2, i * 1.5);
-      const body = new THREE.Mesh(this.geometry.body, material);
-      body.position.y = 2;
-      unit.add(body);
-      const head = new THREE.Mesh(this.geometry.head, this.skinMaterial);
-      head.position.y = 11;
-      unit.add(head);
-      const helmet = new THREE.Mesh(this.geometry.helmet, material);
-      helmet.position.y = 12.6;
-      unit.add(helmet);
-      const rifle = new THREE.Mesh(this.geometry.rifle, this.material("#3a3d38"));
-      rifle.position.set(6.5, 3.5, 2.5);
-      rifle.rotation.z = -0.42;
-      unit.add(rifle);
-      unit.rotation.set(0.1, -0.32, 0);
-      group.add(unit);
-    }
-    return group;
-  }
-
-  private ship(color: string, selected: boolean): THREE.Group {
-    const group = new THREE.Group();
-    const shadow = new THREE.Mesh(this.geometry.shadow, this.shadowMaterial);
-    shadow.position.z = -4;
-    shadow.scale.set(1.8, 0.6, 1);
-    group.add(shadow);
-    if (selected) {
-      const ring = new THREE.Mesh(this.geometry.ring, this.ringMaterial);
-      ring.position.z = -3;
-      ring.scale.set(1.8, 0.7, 1);
-      group.add(ring);
-    }
-    const hull = new THREE.Mesh(this.geometry.hull, this.material(color));
-    hull.position.y = -2;
-    group.add(hull);
-    const tower = new THREE.Mesh(this.geometry.tower, this.material(color));
-    tower.position.set(-3, 5, 2);
-    group.add(tower);
-    const gun = new THREE.Mesh(this.geometry.rifle, this.material("#30332f"));
-    gun.position.set(7, 4, 3);
-    gun.rotation.z = Math.PI / 2.3;
-    group.add(gun);
-    group.rotation.set(0.14, -0.28, 0);
-    return group;
+  static async create(map: L.Map, container: HTMLElement): Promise<Units3D> {
+    const canvas = document.createElement("canvas");
+    canvas.className = "units3d-layer";
+    container.appendChild(canvas);
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      alpha: true,
+      antialias: false,
+    });
+    return new Units3D(map, container, renderer);
   }
 
   clear(): void {
-    for (const entry of this.entries) this.scene.remove(entry.group);
     this.entries.length = 0;
+    this.marches.length = 0;
+    this.selectedId = -1;
+  }
+
+  setFlagLabel(label: string, color: string): void {
+    const text = label.trim().slice(0, 8);
+    if (text === this.flagLabel && color === this.flagColor) return;
+    this.flagLabel = text;
+    this.flagColor = color;
+    const ctx = this.flagCanvas.getContext("2d");
+    if (!ctx) return;
+    const styles = getComputedStyle(document.documentElement);
+    const ink = styles.getPropertyValue("--color-accent-bright").trim();
+    const font = styles.getPropertyValue("--font-display").trim();
+    ctx.clearRect(0, 0, 256, 128);
+    ctx.fillStyle = color || styles.getPropertyValue("--color-surface-3").trim();
+    ctx.fillRect(0, 0, 256, 128);
+    ctx.fillStyle = ink;
+    ctx.globalAlpha = 0.16;
+    ctx.fillRect(0, 96, 256, 32);
+    ctx.globalAlpha = 1;
+    ctx.font = `700 64px ${font}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text || "◈", 128, 60, 224);
+    this.flagTexture.needsUpdate = true;
   }
 
   update(snap: Snapshot, selectedTown: number): void {
+    const previous = new Map(
+      this.entries.map((entry) => [
+        entry.id,
+        { x: entry.currentX, y: entry.currentY, scale: entry.currentScale },
+      ]),
+    );
     this.clear();
-    this.lastTowns = new Map(snap.towns.map((town) => [town.id, { lat: town.lat, lon: town.lon }]));
+    this.lastTowns = new Map(
+      snap.towns.map((town) => [town.id, { lat: town.lat, lon: town.lon }]),
+    );
     const towns = snap.towns
       .filter((town) => town.tr >= 1200 || town.id === selectedTown)
       .sort((a, b) => b.tr - a.tr)
-      .slice(0, 140);
+      .slice(0, MAX_UNITS);
     if (!towns.some((town) => town.id === selectedTown)) {
       const selected = snap.towns[selectedTown];
       if (selected) towns.push(selected);
     }
+    let infantryIndex = 0;
+    let shipIndex = 0;
     for (const town of towns) {
-      const color = colorOf(town.o);
-      const sea = town.po === 1 && town.tr >= 3000 && town.id % 3 === 0;
-      const group = sea ? this.ship(color, town.id === selectedTown) : this.soldier(color, Math.round(town.tr / 2800), town.id === selectedTown);
-      this.scene.add(group);
-      this.entries.push({
+      const kind: UnitKind =
+        town.po === 1 && town.tr >= 3000 && town.id % 3 === 0
+          ? "ship"
+          : "infantry";
+      const instanceIndex = kind === "ship" ? shipIndex++ : infantryIndex++;
+      const entry: UnitEntry = {
         id: town.id,
-        owner: town.o,
-        sea,
+        kind,
+        color: colorOf(town.o),
         baseScale: Math.min(1.35, 0.8 + Math.log10(1 + town.tr) / 12),
-        group,
-      });
+        phase: town.id * 0.37,
+        instanceIndex,
+        targetX: 0,
+        targetY: 0,
+        targetScale: 1,
+        currentX: 0,
+        currentY: 0,
+        currentScale: 1,
+      };
+      this.entries.push(entry);
+      this.color.set(entry.color);
+      if (kind === "ship") this.shipColor.setColorAt(instanceIndex, this.color);
+      else this.infantryColor.setColorAt(instanceIndex, this.color);
+      if (town.id === selectedTown) this.selectedId = town.id;
     }
+    this.infantryColor.count = Math.min(infantryIndex, MAX_UNITS);
+    this.infantryDetail.count = this.infantryColor.count;
+    this.shipColor.count = Math.min(shipIndex, MAX_UNITS);
+    this.shipDetail.count = this.shipColor.count;
+    this.shadows.count = Math.min(this.entries.length, MAX_UNITS);
+    if (this.infantryColor.instanceColor)
+      this.infantryColor.instanceColor.needsUpdate = true;
+    if (this.shipColor.instanceColor)
+      this.shipColor.instanceColor.needsUpdate = true;
+
+    let marchIndex = 0;
+    for (const [index, order] of snap.orders.slice(0, 8).entries()) {
+      const from = snap.towns[order.from];
+      const to = snap.towns[order.to];
+      if (!from || !to) continue;
+      const march: MarchEntry = {
+        from: { lat: from.lat, lon: from.lon },
+        to: { lat: to.lat, lon: to.lon },
+        color: colorOf(from.o),
+        phase: (index * 0.19) % 1,
+        speed: order.sea ? 0.09 : 0.13,
+      };
+      this.marches.push(march);
+      this.color.set(march.color);
+      for (let i = 0; i < 3; i++)
+        this.marchers.setColorAt(marchIndex++, this.color);
+    }
+    this.marchers.count = Math.min(marchIndex, MAX_MARCHERS);
+    if (this.marchers.instanceColor) this.marchers.instanceColor.needsUpdate = true;
+
     this.sync();
+    for (const entry of this.entries) {
+      const old = previous.get(entry.id);
+      entry.currentX = old?.x ?? entry.targetX;
+      entry.currentY = old?.y ?? entry.targetY;
+      entry.currentScale = old?.scale ?? entry.targetScale;
+    }
   }
 
   resize(): void {
@@ -173,30 +402,151 @@ export class Units3D {
   sync(): void {
     const height = this.container.clientHeight;
     const zoom = this.map.getZoom();
-    const zoomScale = Math.min(1.75, Math.max(0.62, 0.66 + (Number.isFinite(zoom) ? zoom - 5 : 0) * 0.17));
+    const zoomScale = Math.min(
+      1.8,
+      Math.max(0.66, 0.7 + (Number.isFinite(zoom) ? zoom - 5 : 0) * 0.18),
+    );
+    this.cachedZoomScale = zoomScale;
     for (const entry of this.entries) {
       const town = this.lastTowns?.get(entry.id);
       if (!town) continue;
       const point = this.map.latLngToContainerPoint([town.lat, town.lon]);
-      entry.group.position.x = point.x;
-      entry.group.position.y = height - point.y;
-      entry.group.scale.setScalar(entry.baseScale * zoomScale);
+      entry.targetX = point.x;
+      entry.targetY = height - point.y;
+      entry.targetScale = entry.baseScale * zoomScale;
+    }
+    this.marchPoints.length = 0;
+    for (const march of this.marches) {
+      const from = this.map.latLngToContainerPoint([
+        march.from.lat,
+        march.from.lon,
+      ]);
+      const to = this.map.latLngToContainerPoint([march.to.lat, march.to.lon]);
+      this.marchPoints.push({
+        fromX: from.x,
+        fromY: height - from.y,
+        toX: to.x,
+        toY: height - to.y,
+      });
     }
   }
 
   setVisible(visible: boolean): void {
     this.visible = visible;
+    if (visible) {
+      this.lastFrame = 0;
+      this.clock.getDelta();
+    }
     this.container.classList.toggle("hide-units3d", !visible);
   }
 
   private animate = (): void => {
-    const time = performance.now() / 1000;
-    if (this.visible) {
-      for (const entry of this.entries) {
-        entry.group.position.z = Math.sin(time * 1.6 + entry.id * 0.7) * 1.4;
-      }
-      this.renderer.render(this.scene, this.camera);
-    }
     requestAnimationFrame(this.animate);
+    if (!this.visible) return;
+    const now = performance.now();
+    if (now - this.lastFrame < 1000 / 30) return;
+    this.lastFrame = now;
+    const delta = Math.min(this.clock.getDelta(), 0.1);
+    const time = this.clock.elapsedTime;
+    const damping = this.reduceMotion ? 1 : 1 - Math.exp(-delta * 9);
+    let infantry = 0;
+    let ships = 0;
+    let shadowIndex = 0;
+    for (const entry of this.entries) {
+      entry.currentX += (entry.targetX - entry.currentX) * damping;
+      entry.currentY += (entry.targetY - entry.currentY) * damping;
+      entry.currentScale += (entry.targetScale - entry.currentScale) * damping;
+      const breath = this.reduceMotion
+        ? 1
+        : 1 + Math.sin(time * 1.35 + entry.phase) * 0.012;
+      const scale = entry.currentScale * breath;
+      const roll = this.reduceMotion
+        ? 0
+        : Math.sin(time * 1.9 + entry.phase) * 0.022;
+      this.position.set(
+        entry.currentX,
+        entry.currentY,
+        this.reduceMotion ? 0 : Math.sin(time * 1.15 + entry.phase) * 0.9,
+      );
+      this.euler.set(0, 0, roll);
+      this.quaternion.setFromEuler(this.euler);
+      this.scale.setScalar(scale);
+      this.matrix.compose(this.position, this.quaternion, this.scale);
+      if (entry.kind === "ship") {
+        this.shipColor.setMatrixAt(ships, this.matrix);
+        this.shipDetail.setMatrixAt(ships, this.matrix);
+        ships++;
+      } else {
+        this.infantryColor.setMatrixAt(infantry, this.matrix);
+        this.infantryDetail.setMatrixAt(infantry, this.matrix);
+        infantry++;
+      }
+      this.position.z = -6;
+      this.scale.set(scale * 1.5, scale * 0.58, 1);
+      this.euler.set(0, 0, 0);
+      this.quaternion.setFromEuler(this.euler);
+      this.matrix.compose(this.position, this.quaternion, this.scale);
+      this.shadows.setMatrixAt(shadowIndex++, this.matrix);
+    }
+    if (this.infantryColor.count) this.infantryColor.instanceMatrix.needsUpdate = true;
+    if (this.infantryDetail.count) this.infantryDetail.instanceMatrix.needsUpdate = true;
+    if (this.shipColor.count) this.shipColor.instanceMatrix.needsUpdate = true;
+    if (this.shipDetail.count) this.shipDetail.instanceMatrix.needsUpdate = true;
+    if (this.shadows.count) this.shadows.instanceMatrix.needsUpdate = true;
+
+    const selected = this.entries.find((entry) => entry.id === this.selectedId);
+    this.ring.visible = Boolean(selected);
+    this.flag.visible = Boolean(selected);
+    if (selected) {
+      const pulse = this.reduceMotion
+        ? 1
+        : 1 + Math.sin(time * 2.1 + selected.phase) * 0.05;
+      this.ring.position.set(selected.currentX, selected.currentY, -4);
+      this.ring.scale.set(1.5 * pulse, 0.62 * pulse, 1);
+      this.flag.position.set(
+        selected.currentX - 8 * selected.currentScale,
+        selected.currentY + 17 * selected.currentScale,
+        4.5,
+      );
+      this.flag.scale.setScalar(selected.currentScale);
+      if (!this.reduceMotion) {
+        const attribute = this.flag.geometry.attributes.position as THREE.BufferAttribute;
+        const array = attribute.array as Float32Array;
+        for (let i = 0; i < this.flagBase.length; i += 3) {
+          const x = this.flagBase[i];
+          array[i + 2] =
+            Math.sin(time * 3.2 + x * 0.55 + selected.phase) *
+            1.15 *
+            ((x + 5.5) / 11);
+        }
+        attribute.needsUpdate = true;
+      }
+    }
+
+    let marchIndex = 0;
+    for (const [index, march] of this.marches.entries()) {
+      const point = this.marchPoints[index];
+      if (!point) break;
+      const progress = (time * march.speed + march.phase) % 1;
+      const eased = progress * progress * (3 - 2 * progress);
+      const x = point.fromX + (point.toX - point.fromX) * eased;
+      const y = point.fromY + (point.toY - point.fromY) * eased;
+      const angle = Math.atan2(point.toY - point.fromY, point.toX - point.fromX);
+      const fade = Math.min(1, Math.sin(Math.PI * progress) * 3);
+      this.euler.set(0, 0, angle);
+      this.quaternion.setFromEuler(this.euler);
+      this.scale.setScalar(this.cachedZoomScale * 0.72 * fade);
+      for (let i = 0; i < 3; i++) {
+        this.position.set(
+          x + Math.cos(angle + Math.PI / 2) * (i - 1) * 5,
+          y + Math.sin(angle + Math.PI / 2) * (i - 1) * 5,
+          9,
+        );
+        this.matrix.compose(this.position, this.quaternion, this.scale);
+        this.marchers.setMatrixAt(marchIndex++, this.matrix);
+      }
+    }
+    if (this.marchers.count) this.marchers.instanceMatrix.needsUpdate = true;
+    this.renderer.render(this.scene, this.camera);
   };
 }

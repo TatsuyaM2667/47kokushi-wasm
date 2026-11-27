@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ENGINE_DATA = ROOT / "engine" / "data.ts"
 OUT_TS = ROOT / "engine" / "realdata.ts"
 OUT_GEOJSON = ROOT / "public" / "data" / "municipalities.json"
+OUT_PREF_GEOJSON = ROOT / "public" / "data" / "prefectures.json"
+OUT_ROUTES = ROOT / "public" / "data" / "routes.json"
 
 POP_INDEX = "https://machi-report.com/data/index.json"
 BOUNDARY_URL = (
@@ -42,6 +44,28 @@ CRAFT_HINTS = ("工", "技", "製", "織", "陶", "金", "鉄", "紙", " Silk", 
 MEAT_HINTS = ("牛", "豚", "肉", "畜", "牧")
 VEG_HINTS = ("野菜", "畑", "菜", "根", "芋", "豆")
 SIGHT_HINTS = ("温泉", "湯", "寺", "社", "城", "公園", "湖", "山", "岳", "峡")
+
+ROUTES = [
+    {"id": "h-touhoku", "kind": "highway", "name": "東北自動車道", "stops": [13, 11, 9, 7, 4, 3, 2]},
+    {"id": "h-toumei", "kind": "highway", "name": "東名高速道路", "stops": [13, 14, 22, 23, 27]},
+    {"id": "h-meishin", "kind": "highway", "name": "名神高速道路", "stops": [23, 24, 25, 26, 27]},
+    {"id": "h-chugoku", "kind": "highway", "name": "中国自動車道", "stops": [27, 28, 33, 34, 35]},
+    {"id": "h-kyushu", "kind": "highway", "name": "九州自動車道", "stops": [40, 43, 45]},
+    {"id": "h-kanetsu", "kind": "highway", "name": "関越自動車道", "stops": [13, 11, 10, 15]},
+    {"id": "h-chuo", "kind": "highway", "name": "中央自動車道", "stops": [13, 19, 20, 21, 23]},
+    {"id": "s-hokkaido", "kind": "shinkansen", "name": "北海道新幹線", "stops": [2, 1]},
+    {"id": "s-touhoku", "kind": "shinkansen", "name": "東北新幹線", "stops": [13, 11, 9, 7, 4, 3, 2]},
+    {"id": "s-joetsu", "kind": "shinkansen", "name": "上越新幹線", "stops": [13, 11, 10, 15]},
+    {"id": "s-hokuriku", "kind": "shinkansen", "name": "北陸新幹線", "stops": [13, 11, 10, 20, 15, 16, 17, 18]},
+    {"id": "s-tokaido", "kind": "shinkansen", "name": "東海道新幹線", "stops": [13, 14, 22, 23, 27]},
+    {"id": "s-sanyo", "kind": "shinkansen", "name": "山陽新幹線", "stops": [27, 28, 33, 34, 35, 40]},
+    {"id": "s-kyushu", "kind": "shinkansen", "name": "九州新幹線", "stops": [40, 43, 45]},
+    {"id": "s-nishi-kyushu", "kind": "shinkansen", "name": "西九州新幹線", "stops": [41, 42]},
+    {"id": "r-tokaido", "kind": "rail", "name": "東海道本線", "stops": [13, 14, 22, 23, 25, 26, 27]},
+    {"id": "r-chuo", "kind": "rail", "name": "中央本線", "stops": [13, 19, 20, 23]},
+    {"id": "r-touhoku", "kind": "rail", "name": "東北本線", "stops": [13, 11, 9, 7, 4, 3, 2]},
+    {"id": "r-kagoshima", "kind": "rail", "name": "鹿児島本線", "stops": [40, 43, 45]},
+]
 
 
 def fetch_json(url: str):
@@ -107,8 +131,8 @@ def geometry_center(geometry: dict) -> tuple[float, float]:
     return ring_center(main)
 
 
-def clean_ring(ring: list[list[float]], epsilon: float = 0.0006) -> list[list[float]]:
-    points = [[round(float(x), 4), round(float(y), 4)] for x, y in ring]
+def clean_ring(ring: list[list[float]], epsilon: float = 0.00012) -> list[list[float]]:
+    points = [[round(float(x), 5), round(float(y), 5)] for x, y in ring]
     deduped: list[list[float]] = []
     for point in points:
         if not deduped or deduped[-1] != point:
@@ -423,7 +447,7 @@ def main() -> None:
         "populationLicense": "出典表示＋リンク",
         "tiles": "国土地理院 地理院タイル",
         "generatedTowns": len(features),
-        "simplifiedWith": "mapshaper 8% keep-shapes",
+        "simplifiedWith": "mapshaper 35% keep-shapes / TopoJSON arcs",
     }
     geojson = {"type": "FeatureCollection", "meta": meta, "features": features}
     with tempfile.TemporaryDirectory() as temporary:
@@ -431,8 +455,8 @@ def main() -> None:
         output_path = Path(temporary) / "simplified.json"
         raw_path.write_text(json.dumps(geojson, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         subprocess.run(
-            ["npx", "--yes", "mapshaper", str(raw_path), "-simplify", "8%", "keep-shapes",
-             "-o", "format=geojson", str(output_path)],
+            ["npx", "--yes", "mapshaper", str(raw_path), "-simplify", "35%", "keep-shapes",
+             "-o", "format=topojson", str(output_path)],
             check=True,
         )
         simplified = json.loads(output_path.read_text(encoding="utf-8"))
@@ -440,7 +464,43 @@ def main() -> None:
         OUT_GEOJSON.write_text(
             json.dumps(simplified, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
         )
-    print(f"{OUT_TS} と {OUT_GEOJSON} を生成しました")
+        pref_path = Path(temporary) / "prefectures.json"
+        subprocess.run(
+            ["npx", "--yes", "mapshaper", str(raw_path), "-simplify", "30%", "keep-shapes",
+             "-dissolve", "pref", "-o", "format=topojson", str(pref_path)],
+            check=True,
+        )
+        prefectures = json.loads(pref_path.read_text(encoding="utf-8"))
+        prefectures["meta"] = meta
+        OUT_PREF_GEOJSON.write_text(
+            json.dumps(prefectures, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+        )
+
+    min_zoom = {"highway": 5.5, "shinkansen": 5.5, "rail": 7}
+    route_data = []
+    for route in ROUTES:
+        points = []
+        for pref in route["stops"]:
+            town = towns[capitals[pref - 1]]
+            points.append([round(town["lon"], 4), round(town["lat"], 4)])
+        route_data.append({
+            "id": route["id"],
+            "kind": route["kind"],
+            "name": route["name"],
+            "minZoom": min_zoom[route["kind"]],
+            "points": points,
+        })
+    routes = {
+        "meta": {
+            "source": "県庁所在地を結ぶ概略線（自作）",
+            "note": "実線形ではなく、ズーム時の交通の気配を表示するためのデータ",
+        },
+        "routes": route_data,
+    }
+    OUT_ROUTES.write_text(
+        json.dumps(routes, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+    )
+    print(f"{OUT_TS}、{OUT_GEOJSON}、{OUT_PREF_GEOJSON}、{OUT_ROUTES} を生成しました")
 
 
 if __name__ == "__main__":

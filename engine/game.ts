@@ -1,6 +1,6 @@
 import {
   PREF_COUNT, PREF_NAMES, SPECIALS, PERSONALITIES,
-  NAVAL, REGIONS, REGION_NAMES, STARS,
+  NAVAL, REGIONS, REGION_NAMES, STARS, LAND_PAIRS, SEA_PAIRS,
 } from "./data";
 import {
   REAL_TOWN_COUNT, REAL_NAMES, REAL_PREF, REAL_POP, REAL_LON, REAL_LAT,
@@ -41,6 +41,8 @@ export class Faction {
   food: i32 = 0;
   equip: i32 = 0;
   ships: i32 = 0;
+  air: i32 = 0;
+  airTech: i32 = 0;
   morale: i32 = 60;
   moraleBase: i32 = 60;
   support: f64 = 60;
@@ -190,6 +192,48 @@ function regionName(p: i32): string {
   return REGION_NAMES[region(p)];
 }
 
+function applyPairRelations(pairs: i32[], delta: i32): void {
+  for (let i = 0; i + 1 < pairs.length; i += 2) {
+    let a = pairs[i];
+    let b = pairs[i + 1];
+    if (a >= 1 && a <= PREF_COUNT && b >= 1 && b <= PREF_COUNT && a != b)
+      adjustRel(a, b, delta);
+  }
+}
+
+function applyGroupRelations(group: i32[], delta: i32, treatyBit: i32, months: i32): void {
+  for (let i = 0; i < group.length; i++) {
+    for (let j = i + 1; j < group.length; j++) {
+      adjustRel(group[i], group[j], delta);
+      if (treatyBit > 0) setTreaty(group[i], group[j], treatyBit, months);
+    }
+  }
+}
+
+function applyHistoricalRelations(): void {
+  for (let a = 1; a <= PREF_COUNT; a++) {
+    for (let b = a + 1; b <= PREF_COUNT; b++) {
+      adjustRel(a, b, region(a) == region(b) ? 18 : -4);
+    }
+  }
+  applyPairRelations(LAND_PAIRS, 24);
+  applyPairRelations(SEA_PAIRS, 10);
+  let kantou: i32[] = [8, 9, 10, 11, 12, 13, 14];
+  let touhoku: i32[] = [2, 3, 4, 5, 6, 7];
+  let kinki: i32[] = [25, 26, 27, 28, 29, 30];
+  let satsuma: i32[] = [35, 42, 43, 45];
+  let saigoku: i32[] = [33, 34, 35];
+  applyGroupRelations(kantou, 28, 0, 0);
+  applyGroupRelations(touhoku, 22, 0, 0);
+  applyGroupRelations(kinki, 30, 0, 0);
+  applyGroupRelations(satsuma, 55, 1, 24);
+  applyGroupRelations(saigoku, 20, 0, 0);
+  for (let i = 0; i < satsuma.length; i++) adjustRel(7, satsuma[i], -55);
+  adjustRel(1, 2, 18);
+  adjustRel(47, 45, 16);
+  adjustRel(47, 42, 12);
+}
+
 function hasTreaty(a: i32, b: i32, bit: i32): bool {
   if (a == b) return false;
   let k = idx(a, b);
@@ -294,6 +338,7 @@ export function newGame(seed: i32, playerPref: i32, difficulty: i32, length: i32
       game.treatyTurns.push(0);
     }
   }
+  applyHistoricalRelations();
   for (let i = 0; i <= PREF_COUNT; i++) {
     game.factions.push(new Faction());
   }
@@ -307,6 +352,8 @@ export function newGame(seed: i32, playerPref: i32, difficulty: i32, length: i32
     f.food = <i32>(REAL_PREF_POP[p - 1] * 1.4);
     f.equip = <i32>(REAL_PREF_POP[p - 1] * 0.3);
     f.ships = naval(p) ? 3 : 0;
+    f.air = 6 + <i32>(REAL_PREF_POP[p - 1] * 0.08);
+    f.airTech = 0;
     f.morale = 60;
     f.moraleBase = 60;
     f.support = 62.0;
@@ -441,6 +488,12 @@ function moraleFactor(m: i32): f64 {
   return 0.7 + <f64>m / 200.0;
 }
 
+function airFactor(f: Faction, troops: i32): f64 {
+  if (troops <= 0) return 1.0;
+  let coverage = clamp(<f64>f.air / <f64>troops, 0.0, 0.5);
+  return 1.0 + <f64>f.airTech * 0.05 + coverage * 0.35;
+}
+
 function terrainPenalty(from: i32, to: i32, season: i32): f64 {
   let a = town(from);
   let b = town(to);
@@ -469,15 +522,16 @@ export function estimate(from: i32, to: i32, troops: i32): string {
   let b = town(to);
   let link = adjacent(from, to);
   let f = faction(a.owner);
+  let df = faction(b.owner);
   let sent = clampI(troops, 0, a.troops);
   let need = <f64>sent / 400.0;
   let eratio = need <= 0 ? 1.0 : clamp(<f64>f.equip / need, 0.0, 1.0);
   let atk = <f64>sent * moraleFactor(f.morale) * (1.0 + <f64>brandLevel(f.id, 5) * 0.01)
     * (f.momentum == 1 ? 1.1 : 1.0) * terrainPenalty(from, to, season())
-    * (link == 2 ? 0.8 : 1.0) * (0.6 + 0.4 * eratio);
+    * (link == 2 ? 0.8 : 1.0) * (0.6 + 0.4 * eratio) * airFactor(f, sent);
   let def = <f64>b.troops * (1.0 + <f64>b.castle * 0.25) * moraleFactor(b.morale)
     * (b.fortify > 0 ? 1.0 + <f64>b.fortify * 0.25 : 1.0)
-    * (b.supplyCut == 1 ? 0.85 : 1.0);
+    * (b.supplyCut == 1 ? 0.85 : 1.0) * airFactor(df, b.troops);
   let odds = clamp(atk / (atk + def + 1.0), 0.02, 0.98);
   let label = "不利";
   if (odds >= 0.8) label = "ほぼ確実";
@@ -583,6 +637,30 @@ export function command(kind: i32, a: i32, b: i32, c: i32): string {
       spend(game.player);
       message(true, "兵糧を200買い入れた。");
       break;
+    case 16: {
+      let amount = clampI(a, 1, 10);
+      let aircraft = b == 1 ? 1 : 0;
+      let unitCost = aircraft == 1 ? 18.0 : 8.0;
+      let cost = <f64>amount * unitCost;
+      if (!pay(f, cost)) { message(false, "予算が足りない。"); break; }
+      if (aircraft == 1) f.air += amount;
+      else f.equip += amount * 5;
+      spend(game.player);
+      message(true, aircraft == 1
+        ? "戦闘機" + amount.toString() + "機を配備した。"
+        : "武器" + (amount * 5).toString() + "を調達した。");
+      break;
+    }
+    case 17: {
+      let target = clampI(a, 1, 3);
+      if (target <= f.airTech) { message(false, "これ以上の航空技術はない。"); break; }
+      let cost = <f64>(target * 45);
+      if (!pay(f, cost)) { message(false, "予算が足りない。"); break; }
+      f.airTech = target;
+      spend(game.player);
+      message(true, "航空技術を段階" + target.toString() + "へ更新した。");
+      break;
+    }
     default:
       message(false, "不明な命令。");
   }
@@ -859,6 +937,73 @@ function doProposal(a: i32, accept: i32, f: Faction): void {
   }
 }
 
+function relocateCapital(oldOwner: i32, lostId: i32): void {
+  if (oldOwner < 1 || oldOwner > PREF_COUNT) return;
+  let oldf = faction(oldOwner);
+  if (oldf.capitalTown != lostId) return;
+  game.towns[lostId].capitalTown = 0;
+  let best = -1;
+  let bestScore = -1.0;
+  for (let i = 0; i < game.towns.length; i++) {
+    let c = game.towns[i];
+    if (c.owner != oldOwner || i == lostId) continue;
+    let score = <f64>c.pop * 0.6 + <f64>c.commerce * 1.4 + <f64>c.industry * 2.0
+      + <f64>c.castle * 8.0 + (c.port > 0 ? 5.0 : 0.0) + <f64>c.troops * 0.01;
+    if (score > bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  }
+  oldf.chaos = 3;
+  oldf.morale = clampI(oldf.morale - 8, 5, 100);
+  if (best < 0) {
+    oldf.capitalTown = -1;
+    addNews(4, oldf.name + "は拠点をすべて失った。");
+    return;
+  }
+  oldf.capitalTown = best;
+  game.towns[best].capitalTown = 1;
+  addNews(4, oldf.name + "の県庁が陥落！ " + game.towns[best].name + "へ移った。");
+}
+
+function defectionTarget(id: i32, oldOwner: i32): i32 {
+  let best = 0;
+  let bestScore = -1e9;
+  for (let k = game.neighborStart[id]; k < game.neighborStart[id + 1]; k++) {
+    let e = game.towns[game.neighborTo[k]];
+    if (e.owner == oldOwner || e.owner < 1 || e.owner > PREF_COUNT) continue;
+    if (faction(e.owner).alive == 0) continue;
+    if (hasTreaty(oldOwner, e.owner, 1) || hasTreaty(oldOwner, e.owner, 2)) continue;
+    let score = <f64>faction(e.owner).towns * 12.0 + <f64>e.troops * 0.02
+      - <f64>game.rel[idx(oldOwner, e.owner)] * 0.6;
+    if (score > bestScore) {
+      bestScore = score;
+      best = e.owner;
+    }
+  }
+  return best;
+}
+
+function defectTown(id: i32, newOwner: i32, oldOwner: i32): void {
+  if (id < 0 || id >= game.towns.length) return;
+  if (newOwner < 1 || newOwner > PREF_COUNT || newOwner == oldOwner) return;
+  if (faction(newOwner).alive == 0) return;
+  let t = game.towns[id];
+  let oldf = faction(oldOwner);
+  let newf = faction(newOwner);
+  t.owner = newOwner;
+  t.troops = <i32>(<f64>t.troops * 0.75);
+  t.morale = 42;
+  t.fortify = 2;
+  oldf.lost++;
+  newf.gained++;
+  oldf.towns--;
+  newf.towns++;
+  adjustRel(oldOwner, newOwner, -10);
+  addNews(2, t.name + "が民心を失い、" + newf.name + "へ寝返った。");
+  if (t.capitalTown == 1 && oldf.capitalTown == id) relocateCapital(oldOwner, id);
+}
+
 function resolveBattles(): string {
   let report = "";
   let survivors: Order[] = [];
@@ -872,6 +1017,7 @@ function resolveBattles(): string {
     let from = town(o.from);
     let to = town(o.to);
     let f = faction(o.owner);
+    let defFaction = faction(to.owner);
     if (from.owner != o.owner || to.owner == o.owner || f.alive == 0) continue;
     let sent = clampI(o.troops, 0, from.troops);
     from.troops -= sent;
@@ -880,12 +1026,16 @@ function resolveBattles(): string {
     let eratio = need <= 0 ? 1.0 : clamp(<f64>f.equip / need, 0.0, 1.0);
     if (f.equip >= <i32>need) f.equip -= <i32>need;
     else f.equip = 0;
+    let airSpent = clampI(<i32>(<f64>sent / 600.0), 0, f.air);
+    f.air -= airSpent;
     let atk = <f64>sent * moraleFactor(f.morale) * (1.0 + <f64>brandLevel(f.id, 5) * 0.01)
       * (f.momentum == 1 ? 1.1 : 1.0) * terrainPenalty(from.pref, to.pref, season())
-      * (o.sea == 1 ? 0.8 : 1.0) * (0.6 + 0.4 * eratio) * (0.92 + rndF() * 0.16);
+      * (o.sea == 1 ? 0.8 : 1.0) * (0.6 + 0.4 * eratio) * airFactor(f, sent)
+      * (0.92 + rndF() * 0.16);
     let fort = to.fortify > 0 ? 1.0 + <f64>to.fortify * 0.25 : 1.0;
     let def = <f64>to.troops * (1.0 + <f64>to.castle * 0.25) * moraleFactor(to.morale)
-      * fort * (to.supplyCut == 1 ? 0.85 : 1.0) * (0.92 + rndF() * 0.16);
+      * fort * (to.supplyCut == 1 ? 0.85 : 1.0) * airFactor(defFaction, to.troops)
+      * (0.92 + rndF() * 0.16);
     if (o.sea == 1 && rndF() < 0.12) {
       let lost = <i32>(<f64>sent * 0.35);
       sent -= lost;
@@ -913,17 +1063,7 @@ function resolveBattles(): string {
       outcome += " 占領";
       addNews(2, f.name + "が" + to.name + "を占領した！（" + f1(atk) + "対" + f1(def) + "）");
       if (to.capitalTown == 1 && oldf.capitalTown == to.id) {
-        let alt = -1;
-        for (let i = 0; i < game.towns.length; i++) {
-          let c = game.towns[i];
-          if (c.owner == oldOwner && c.fortify == 0) { alt = i; break; }
-        }
-        if (alt >= 0) {
-          oldf.capitalTown = alt;
-          game.towns[alt].capitalTown = 1;
-          oldf.chaos = 3;
-          addNews(4, oldf.name + "の県庁が陥落！ " + game.towns[alt].name + "へ移った。");
-        }
+        relocateCapital(oldOwner, to.id);
       }
     } else {
       to.troops = <i32>Math.max(<f64>(to.troops - defLoss), 0.0);
@@ -976,6 +1116,7 @@ function economyTurn(): void {
     let income = 0.0;
     let harvest = 0.0;
     let equipGain = 4.0;
+    let airGain = 1.0;
     for (let i = 0; i < game.towns.length; i++) {
       let t = game.towns[i];
       if (t.owner != fid) continue;
@@ -983,19 +1124,22 @@ function economyTurn(): void {
       if (t.specialty >= 0) income += 1.2;
       if (month() == 10) harvest += t.pop * (<f64>t.farm * 0.10 + 0.15);
       equipGain += <f64>t.industry * 0.9;
+      airGain += <f64>t.industry * 0.35;
       if (t.supplyCut == 1) {
         t.morale = clampI(t.morale - 2, 0, 100);
-        for (let k = game.neighborStart[t.id]; k < game.neighborStart[t.id + 1]; k++) {
-          let e = game.towns[game.neighborTo[k]];
-          if (e.owner != fid && rndF() < 0.03 && f.chaos == 0) {
-            e.owner = fid;
-            e.troops += t.troops / 2;
-            t.troops /= 2;
-            e.morale = 40;
-            e.fortify = 2;
-            addNews(2, t.name + "が補給線を絶たれ、" + e.name + "側へ降った。");
-            break;
+        if (f.towns > 1 && f.chaos == 0 && rndF() < 0.03) {
+          let target = defectionTarget(t.id, fid);
+          if (target > 0) {
+            defectTown(t.id, target, fid);
+            continue;
           }
+        }
+      }
+      if (t.morale < 24 && f.towns > 1 && f.chaos == 0 && rndF() < 0.002) {
+        let target = defectionTarget(t.id, fid);
+        if (target > 0) {
+          defectTown(t.id, target, fid);
+          continue;
         }
       }
       t.morale = clampI(t.morale + (70 - t.morale) / 12, 0, 100);
@@ -1033,6 +1177,7 @@ function economyTurn(): void {
     f.budget += income - salary;
     equipGain *= 1.0 + <f64>brandLevel(fid, 7) * 0.1;
     f.equip += <i32>equipGain;
+    f.air += <i32>airGain;
     if (f.chaos > 0) f.chaos--;
     f.moraleBase = 60 + brandLevel(fid, 5) * 3;
     f.morale = clampI(f.morale + (f.moraleBase - f.morale) / 8 + (f.momentum == 1 ? 1 : 0), 5, 100);
@@ -1268,6 +1413,8 @@ export function snapshot(): string {
   sfield = field(sfield, "food", pf.food.toString(), true);
   sfield = field(sfield, "equip", pf.equip.toString(), true);
   sfield = field(sfield, "ships", pf.ships.toString(), true);
+  sfield = field(sfield, "air", pf.air.toString(), true);
+  sfield = field(sfield, "airTech", pf.airTech.toString(), true);
   sfield = field(sfield, "morale", pf.morale.toString(), true);
   sfield = field(sfield, "support", f1(pf.support), true);
   sfield = field(sfield, "momentum", pf.momentum.toString(), true);
@@ -1332,6 +1479,8 @@ export function snapshot(): string {
     o = field(o, "food", f.food.toString(), true);
     o = field(o, "equip", f.equip.toString(), true);
     o = field(o, "ships", f.ships.toString(), true);
+    o = field(o, "air", f.air.toString(), true);
+    o = field(o, "airTech", f.airTech.toString(), true);
     o = field(o, "troops", troopsOf(f.id).toString(), true);
     o = field(o, "morale", f.morale.toString(), true);
     o = field(o, "support", f1(f.support), true);

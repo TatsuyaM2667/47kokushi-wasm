@@ -37,6 +37,8 @@ export interface FactionView {
   food: number;
   equip: number;
   ships: number;
+  air: number;
+  airTech: number;
   troops: number;
   morale: number;
   support: number;
@@ -99,6 +101,8 @@ export interface Snapshot {
     food: number;
     equip: number;
     ships: number;
+    air: number;
+    airTech: number;
     morale: number;
     support: number;
     momentum: number;
