@@ -106,6 +106,8 @@ const LEFT_TABS = [
 let engine: GameEngine;
 let japanMap: JapanMap;
 let units3d: Units3D | undefined;
+let intro: { dispose(): void } | undefined;
+let introLoading: Promise<void> | undefined;
 let snap: Snapshot;
 let selectedPref = 13;
 let selectedTown = 0;
@@ -721,6 +723,21 @@ function hideModal(): void {
   $("#modal").classList.remove("cutin");
 }
 
+async function ensureIntro(): Promise<void> {
+  if (intro || introLoading || reduceMotion) return;
+  introLoading = (async () => {
+    const { createIntro } = await import("./intro");
+    intro = await createIntro();
+  })();
+  await introLoading;
+}
+
+function disposeIntro(): void {
+  intro?.dispose();
+  intro = undefined;
+  introLoading = undefined;
+}
+
 async function ensureUnits3D(): Promise<void> {
   if (units3d) return;
   const { Units3D: Units3DClass } = await import("./units3d");
@@ -772,6 +789,7 @@ async function handleAction(action: string, el: Element): Promise<void> {
       renderStartOptions();
       break;
     case "start":
+      disposeIntro();
       $("#start").classList.add("hidden");
       $("#app").classList.remove("hidden");
       await startGame(
@@ -784,6 +802,7 @@ async function handleAction(action: string, el: Element): Promise<void> {
     case "continue": {
       const saved = engine.hasSave();
       if (!saved) return;
+      disposeIntro();
       $("#start").classList.add("hidden");
       $("#app").classList.remove("hidden");
       lastResult = 0;
@@ -927,6 +946,7 @@ async function handleAction(action: string, el: Element): Promise<void> {
       $("#start").classList.remove("hidden");
       lastResult = 0;
       renderStartOptions();
+      void ensureIntro();
       break;
     case "savePrefProfile": {
       const nameInput = $<HTMLInputElement>("#prefNameInput");
@@ -972,6 +992,7 @@ async function main(): Promise<void> {
   renderStartOptions();
   $("#loading").classList.add("hidden");
   $("#start").classList.remove("hidden");
+  void ensureIntro();
 }
 
 document.addEventListener("click", (event) => {

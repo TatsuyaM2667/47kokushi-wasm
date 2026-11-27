@@ -17,7 +17,36 @@
         <div id="loading" class="loading">日本をつくっています…</div>
 
         <div id="start" class="start hidden">
-            <div class="start-shell">
+            <div class="start-scroll">
+                <section class="intro-pin" aria-label="シネマティックイントロ">
+                    <canvas id="introCanvas" class="intro-canvas"></canvas>
+                    <canvas id="introFx" class="intro-fx"></canvas>
+                    <div class="intro-vignette"></div>
+                    <div class="intro-captions">
+                        <article class="intro-copy" data-scene="0">
+                            <span class="intro-kicker">01 / 群雄</span>
+                            <h2>列島が、<em>目を覚ます。</em></h2>
+                            <p>47の旗が霧の中で揺れる。国境線はまだ、鉛筆の一本。</p>
+                        </article>
+                        <article class="intro-copy" data-scene="1">
+                            <span class="intro-kicker">02 / 戦略</span>
+                            <h2>1,741の町が、<em>盤面になる。</em></h2>
+                            <p>鉄道は動脈、海路は血管。補給と民心が、勝敗を決める。</p>
+                        </article>
+                        <article class="intro-copy" data-scene="2">
+                            <span class="intro-kicker">03 / 天下</span>
+                            <h2>日本を、<em>ひとつに。</em></h2>
+                            <p>遷都、寝返り、航空技術。選んだ一手が、十年後の地図を描く。</p>
+                        </article>
+                    </div>
+                    <div class="intro-progress" aria-hidden="true">
+                        <span class="intro-progress-fill"></span>
+                        <i data-step="0"></i><i data-step="1"></i><i data-step="2"></i>
+                    </div>
+                    <button id="introSkip" class="intro-skip">セットアップへ ↵</button>
+                </section>
+                <div class="intro-track" aria-hidden="true"></div>
+                <div class="start-shell">
                 <section class="start-brief">
                     <div class="brand-row">
                         <span class="brand-seal">47</span>
@@ -60,6 +89,7 @@
                         <button data-action="continue" id="continueBtn">つづきから</button>
                     </div>
                 </section>
+            </div>
             </div>
         </div>
 
